@@ -3,8 +3,36 @@ package tachyon:ai@1.0.0;
 // Provided by the Tachyon-Mesh host runtime.
 // Will migrate to tachyon:mesh package once the mesh WIT is published.
 interface storage-broker {
+    /// Metadata returned by stat-file, used for cache-key construction.
+    record file-stat {
+        size-bytes: u64,
+        /// Unix timestamp (seconds). Used to detect file changes and
+        /// invalidate the corresponding kv-partition cache entry.
+        modified-secs: u64,
+    }
+
     /// Read raw bytes from an absolute or repo-relative file path.
     read-file: func(path: string) -> result<list<u8>, string>;
+
+    /// Return lightweight metadata without reading the full file.
+    /// Used to build the mtime-based cache key before deciding whether
+    /// a kv-partition lookup is worthwhile.
+    stat-file: func(path: string) -> result<file-stat, string>;
+}
+
+/// Persistent key-value partition provided by the Tachyon-Mesh host.
+/// Configured in the deployment manifest as disk-backed or memory-only.
+/// Handles concurrent access and I/O queuing — the component never
+/// touches the underlying storage format directly.
+interface kv-partition {
+    /// Retrieve a previously stored value. Returns `none` on cache miss.
+    get: func(key: string) -> result<option<list<u8>>, string>;
+
+    /// Persist a value. Overwrites any existing entry for the same key.
+    set: func(key: string, value: list<u8>) -> result<_, string>;
+
+    /// Remove a single entry. No-op if the key does not exist.
+    delete: func(key: string) -> result<_, string>;
 }
 
 /// Hierarchical code-context interface consumed by the Pulsar agent.
@@ -37,5 +65,6 @@ interface viking-context {
 
 world viking-context-world {
     import storage-broker;
+    import kv-partition;
     export viking-context;
 }
