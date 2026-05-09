@@ -6,9 +6,6 @@ mod component {
     wit_bindgen::generate!({
         path: "wit",
         world: "viking-context-world",
-        exports: {
-            "tachyon:ai/viking-context": VikingContextImpl,
-        }
     });
 
     use exports::tachyon::ai::viking_context::{ContextLevel, ContextResponse, Guest};
@@ -45,6 +42,8 @@ mod component {
             })
         }
     }
+
+    export!(VikingContextImpl);
 }
 
 // ── Pure business logic (always compiled) ────────────────────────────────────
@@ -66,33 +65,31 @@ pub fn build_summary(path: &str, content: &str) -> String {
     let line_count = content.lines().count();
     let mut out = format!("# {path}\nLines: {line_count}\n");
 
-    if path.ends_with(".rs") {
-        if let Ok(file) = syn::parse_file(content) {
-            let pub_items: Vec<String> = file
-                .items
-                .iter()
-                .filter_map(|item| match item {
-                    syn::Item::Fn(f) if matches!(f.vis, syn::Visibility::Public(_)) => {
-                        Some(format!("fn {}", f.sig.ident))
-                    }
-                    syn::Item::Struct(s) if matches!(s.vis, syn::Visibility::Public(_)) => {
-                        Some(format!("struct {}", s.ident))
-                    }
-                    syn::Item::Enum(e) if matches!(e.vis, syn::Visibility::Public(_)) => {
-                        Some(format!("enum {}", e.ident))
-                    }
-                    syn::Item::Trait(t) if matches!(t.vis, syn::Visibility::Public(_)) => {
-                        Some(format!("trait {}", t.ident))
-                    }
-                    _ => None,
-                })
-                .collect();
+    if path.ends_with(".rs") && let Ok(file) = syn::parse_file(content) {
+        let pub_items: Vec<String> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Fn(f) if matches!(f.vis, syn::Visibility::Public(_)) => {
+                    Some(format!("fn {}", f.sig.ident))
+                }
+                syn::Item::Struct(s) if matches!(s.vis, syn::Visibility::Public(_)) => {
+                    Some(format!("struct {}", s.ident))
+                }
+                syn::Item::Enum(e) if matches!(e.vis, syn::Visibility::Public(_)) => {
+                    Some(format!("enum {}", e.ident))
+                }
+                syn::Item::Trait(t) if matches!(t.vis, syn::Visibility::Public(_)) => {
+                    Some(format!("trait {}", t.ident))
+                }
+                _ => None,
+            })
+            .collect();
 
-            if !pub_items.is_empty() {
-                out.push_str("Public: ");
-                out.push_str(&pub_items.join(", "));
-                out.push('\n');
-            }
+        if !pub_items.is_empty() {
+            out.push_str("Public: ");
+            out.push_str(&pub_items.join(", "));
+            out.push('\n');
         }
     }
 
