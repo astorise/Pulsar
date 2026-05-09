@@ -75,7 +75,7 @@ mod component {
             };
 
             // Persist to cache (best-effort: a write failure must not break the call).
-            let _ = kv_partition::set(&cache_key, payload.as_bytes().to_vec());
+            let _ = kv_partition::set(&cache_key, payload.as_bytes());
 
             Ok(ContextResponse {
                 uri,
