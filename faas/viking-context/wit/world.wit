@@ -1,0 +1,41 @@
+package tachyon:ai@1.0.0;
+
+// Provided by the Tachyon-Mesh host runtime.
+// Will migrate to tachyon:mesh package once the mesh WIT is published.
+interface storage-broker {
+    /// Read raw bytes from an absolute or repo-relative file path.
+    read-file: func(path: string) -> result<list<u8>, string>;
+}
+
+/// Hierarchical code-context interface consumed by the Pulsar agent.
+interface viking-context {
+    /// Depth of the semantic context requested.
+    enum context-level {
+        /// High-level file summary — lowest token cost.
+        l0-summary,
+        /// AST skeleton (signatures, structs, traits) — no bodies.
+        l1-structure,
+        /// Exact source code — highest token cost.
+        l2-raw,
+    }
+
+    /// A resolved chunk of context ready for LLM prompt injection.
+    record context-response {
+        /// The URI that was resolved.
+        uri: string,
+        /// The actual level resolved (may differ from request if fallback occurred).
+        level: context-level,
+        /// The text payload to inject into the prompt.
+        payload: string,
+        /// Rough token estimate (chars / 4) to help the agent manage its budget.
+        token-estimate: u32,
+    }
+
+    /// Resolve a viking:// URI into a structured, token-efficient payload.
+    resolve: func(uri: string, level: context-level) -> result<context-response, string>;
+}
+
+world viking-context-world {
+    import storage-broker;
+    export viking-context;
+}

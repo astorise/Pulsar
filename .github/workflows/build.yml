@@ -1,0 +1,83 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── WASM Components (cargo-component → wasm32-wasip2) ──────────────────────
+  build-faas:
+    name: "Build WASM: faas components"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache both component crates + the cargo-component binary itself
+          cache-on-failure: true
+
+      - name: Install cargo-component
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component
+
+      - name: Build viking-context
+        working-directory: faas/viking-context
+        run: cargo component build --release
+
+      - name: Build skill-extractor
+        working-directory: faas/skill-extractor
+        run: cargo component build --release
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-components
+          path: |
+            faas/viking-context/target/wasm32-wasip2/release/*.wasm
+            faas/skill-extractor/target/wasm32-wasip2/release/*.wasm
+          if-no-files-found: warn
+
+  # ── CLI (native binary) ─────────────────────────────────────────────────────
+  build-cli:
+    name: "Build CLI: pulsar-cli (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: pulsar-cli
+          - os: windows-latest
+            artifact: pulsar-cli.exe
+          - os: macos-latest
+            artifact: pulsar-cli
+    defaults:
+      run:
+        working-directory: pulsar-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pulsar-cli
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulsar-cli-${{ matrix.os }}
+          path: pulsar-cli/target/release/${{ matrix.artifact }}
