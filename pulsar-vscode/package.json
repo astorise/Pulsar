@@ -1,0 +1,78 @@
+{
+  "name": "pulsar-vscode",
+  "displayName": "Pulsar",
+  "description": "Pulsar web extension sidebar for the Tachyon orchestrator.",
+  "version": "0.1.0",
+  "publisher": "astorise",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onView:pulsar.chatView",
+    "onCommand:pulsar.sendSelection"
+  ],
+  "browser": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Pulsar",
+      "properties": {
+        "pulsar.orchestratorUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:8081/orchestrator",
+          "description": "WebSocket URL of the Tachyon orchestrator."
+        },
+        "pulsar.workspaceUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080/webdav",
+          "description": "Workspace WebDAV URL exposed by pulsar-cli."
+        },
+        "pulsar.workspaceToken": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for the pulsar-cli workspace bridge."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "pulsar.sendSelection",
+        "title": "Pulsar: Send Selection"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pulsar-chat",
+          "title": "Pulsar",
+          "icon": "media/pulsar.svg"
+        }
+      ]
+    },
+    "views": {
+      "pulsar-chat": [
+        {
+          "id": "pulsar.chatView",
+          "name": "Chat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --format=cjs --platform=browser --external:vscode --outfile=dist/extension.js",
+    "check": "tsc --noEmit",
+    "package": "npm run check && npm run compile && vsce package --target web -o pulsar-web-extension.vsix"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.6.2",
+    "esbuild": "^0.27.0",
+    "typescript": "^5.9.3"
+  }
+}

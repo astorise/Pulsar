@@ -91,3 +91,30 @@ jobs:
         with:
           name: pulsar-cli-${{ matrix.os }}
           path: pulsar-cli/target/release/${{ matrix.artifact }}
+
+  build-vscode-extension:
+    name: "Build VS Code web extension"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pulsar-vscode
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pulsar-vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package web extension
+        run: npm run package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulsar-web-extension
+          path: pulsar-vscode/pulsar-web-extension.vsix

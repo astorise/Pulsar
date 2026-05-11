@@ -3,6 +3,8 @@
 **/bin/*
 **/obj/*
 *.log
+*.vsix
+pulsar-vscode/dist/*
 **/.env.local
 **/.env.*.local
 .codex-tmp/*
