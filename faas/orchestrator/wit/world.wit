@@ -1,0 +1,85 @@
+package tachyon:ai@1.0.0;
+
+interface inference {
+    record inference-request {
+        model-id: string,
+        prompt: string,
+        max-tokens: u32,
+        temperature: f32,
+        lora-adapter: option<string>,
+    }
+
+    record inference-response {
+        text: string,
+        prompt-tokens: u32,
+        completion-tokens: u32,
+    }
+
+    generate: func(req: inference-request) -> result<inference-response, string>;
+}
+
+interface viking-context {
+    enum context-level {
+        l0-summary,
+        l1-structure,
+        l2-raw,
+    }
+
+    record context-response {
+        uri: string,
+        level: context-level,
+        payload: string,
+        token-estimate: u32,
+    }
+
+    resolve: func(uri: string, level: context-level) -> result<context-response, string>;
+}
+
+interface skill-extractor {
+    record extraction-request {
+        task-description: string,
+        execution-trace: string,
+    }
+
+    record extraction-response {
+        skill-uri: string,
+        learned-concept: string,
+    }
+
+    extract: func(req: extraction-request) -> result<extraction-response, string>;
+}
+
+// Host-provided bridge implemented by Tachyon and the connected CLI.
+interface workspace-bridge {
+    webdav-get: func(session-id: string, path: string) -> result<list<u8>, string>;
+    webdav-put: func(session-id: string, path: string, contents: list<u8>) -> result<_, string>;
+    webdav-propfind: func(session-id: string, path: string) -> result<list<string>, string>;
+    websocket-command: func(session-id: string, command: string) -> result<string, string>;
+}
+
+interface orchestrator {
+    record session-config {
+        workspace-url: string,
+        workspace-token: string,
+        max-tier: u32,
+    }
+
+    enum agent-status {
+        idle,
+        thinking,
+        acting,
+        awaiting-user,
+        finished,
+    }
+
+    start-session: func(cfg: session-config) -> result<string, string>;
+    submit-input: func(session-id: string, text: string) -> result<_, string>;
+}
+
+world orchestrator-world {
+    import inference;
+    import viking-context;
+    import skill-extractor;
+    import workspace-bridge;
+    export orchestrator;
+}

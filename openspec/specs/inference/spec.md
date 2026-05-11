@@ -7,7 +7,7 @@ TBD - created by archiving change faas-inference-gateway. Update Purpose after a
 The system SHALL provide a `tachyon:ai/inference` interface for internal FaaS components to request local LLM generation through a single gateway.
 
 #### Scenario: Component requests blocking generation
-- **GIVEN** a component has an `inference-request` with `model-id`, `prompt`, `max-tokens`, `temperature`, and optional `lora-adapter`
+- **GIVEN** a component has an `inference-request` with `model-id`, `prompt`, `max-tokens`, `temperature` (`f32`), and optional `lora-adapter`
 - **WHEN** it calls `generate`
 - **THEN** the gateway returns an `inference-response` containing generated text, prompt token count, and completion token count
 
@@ -26,4 +26,3 @@ The gateway SHALL pass generation options and optional LoRA adapter selection to
 - **GIVEN** an inference request with `lora-adapter` set
 - **WHEN** the gateway initializes the model context
 - **THEN** the adapter identifier is included in runtime metadata so the host can apply the adapter without restarting the model
-

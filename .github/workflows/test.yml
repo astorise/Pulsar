@@ -48,6 +48,42 @@ jobs:
       - name: cargo test
         run: cargo test --lib
 
+  test-inference-gateway:
+    name: "Tests: faas/inference-gateway"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: faas/inference-gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: faas/inference-gateway
+
+      - name: cargo test
+        run: cargo test --lib
+
+  test-orchestrator:
+    name: "Tests: faas/orchestrator"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: faas/orchestrator
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: faas/orchestrator
+
+      - name: cargo test
+        run: cargo test --lib
+
   test-pulsar-cli:
     name: "Tests: pulsar-cli"
     runs-on: ubuntu-latest
@@ -68,11 +104,18 @@ jobs:
 
   # ── Lint ────────────────────────────────────────────────────────────────────
   clippy:
-    name: "Clippy: faas/viking-context"
+    name: "Clippy: ${{ matrix.crate }}"
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate:
+          - faas/viking-context
+          - faas/inference-gateway
+          - faas/skill-extractor
+          - faas/orchestrator
     defaults:
       run:
-        working-directory: faas/viking-context
+        working-directory: ${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +125,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: faas/viking-context
+          workspaces: ${{ matrix.crate }}
 
       - name: clippy
         run: cargo clippy --lib -- -D warnings

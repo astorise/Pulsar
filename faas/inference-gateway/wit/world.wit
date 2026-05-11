@@ -5,7 +5,7 @@ interface inference {
         model-id: string,
         prompt: string,
         max-tokens: u32,
-        temperature: float32,
+        temperature: f32,
         lora-adapter: option<string>,
     }
 
