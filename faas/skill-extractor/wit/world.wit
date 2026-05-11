@@ -1,0 +1,43 @@
+package tachyon:ai@1.0.0;
+
+interface inference {
+    record inference-request {
+        model-id: string,
+        prompt: string,
+        max-tokens: u32,
+        temperature: float32,
+        lora-adapter: option<string>,
+    }
+
+    record inference-response {
+        text: string,
+        prompt-tokens: u32,
+        completion-tokens: u32,
+    }
+
+    generate: func(req: inference-request) -> result<inference-response, string>;
+}
+
+interface storage-broker {
+    write-file: func(path: string, contents: list<u8>) -> result<_, string>;
+}
+
+interface skill-extractor {
+    record extraction-request {
+        task-description: string,
+        execution-trace: string,
+    }
+
+    record extraction-response {
+        skill-uri: string,
+        learned-concept: string,
+    }
+
+    extract: func(req: extraction-request) -> result<extraction-response, string>;
+}
+
+world skill-extractor-world {
+    import inference;
+    import storage-broker;
+    export skill-extractor;
+}

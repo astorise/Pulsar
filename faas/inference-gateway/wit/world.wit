@@ -1,0 +1,37 @@
+package tachyon:ai@1.0.0;
+
+interface inference {
+    record inference-request {
+        model-id: string,
+        prompt: string,
+        max-tokens: u32,
+        temperature: float32,
+        lora-adapter: option<string>,
+    }
+
+    record inference-response {
+        text: string,
+        prompt-tokens: u32,
+        completion-tokens: u32,
+    }
+
+    generate: func(req: inference-request) -> result<inference-response, string>;
+}
+
+// Host-provided Tachyon bridge to the active wasi-nn backend.
+// The host maps these operations to wasi:nn graph/context/tensor calls and
+// keeps model graphs warm across component invocations.
+interface nn-runtime {
+    resource execution-context {
+        set-input: func(slot: u32, dimensions: list<u32>, data: list<u8>) -> result<_, string>;
+        compute: func() -> result<_, string>;
+        get-output: func(slot: u32) -> result<list<u8>, string>;
+    }
+
+    load-graph: func(model-id: string, metadata-json: string) -> result<execution-context, string>;
+}
+
+world inference-gateway-world {
+    import nn-runtime;
+    export inference;
+}

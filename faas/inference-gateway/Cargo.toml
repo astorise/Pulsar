@@ -1,5 +1,5 @@
 [package]
-name = "skill-extractor"
+name = "inference-gateway"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +8,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = "1"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

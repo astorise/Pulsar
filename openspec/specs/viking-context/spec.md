@@ -1,102 +1,76 @@
-# Interface Specification: tachyon:ai/viking-context
+## Purpose
+`tachyon:ai/viking-context` provides hierarchical codebase memory to the Pulsar agent. It resolves `viking://` URIs into token-efficient context payloads while delegating file access and cache persistence to Tachyon-Mesh host services.
 
-This WIT definition standardises how the Pulsar agent fetches hierarchical
-codebase memory, and how the component interacts with its Tachyon-Mesh host
-dependencies.
+## Requirements
 
-```wit
-package tachyon:ai@1.0.0;
+### Requirement: Viking Context WIT Contract
+The system SHALL expose a `viking-context` interface with context levels `l0-summary`, `l1-structure`, and `l2-raw`, returning a `context-response` with URI, resolved level, payload, and token estimate.
 
-// ── Host-provided imports ─────────────────────────────────────────────────────
+#### Scenario: Agent resolves a Viking URI
+- **GIVEN** the agent requests `viking://faas/viking-context/src/lib.rs`
+- **WHEN** it calls `resolve` with a context level
+- **THEN** the component returns a context response for that URI with a payload and token estimate
 
-// Will migrate to tachyon:mesh once the mesh WIT is published.
-interface storage-broker {
-    record file-stat {
-        size-bytes: u64,
-        /// Unix timestamp (seconds) — used as the cache-invalidation signal.
-        modified-secs: u64,
-    }
+### Requirement: Host-Backed Storage Access
+The component SHALL import host-provided `storage-broker` functions for `read-file` and `stat-file`, and a `kv-partition` interface for `get`, `set`, and `delete`.
 
-    /// Read raw bytes from a repo-relative or absolute file path.
-    read-file: func(path: string) -> result<list<u8>, string>;
+#### Scenario: Component needs source content
+- **GIVEN** a valid repo-relative or absolute file path
+- **WHEN** the component needs file contents or metadata
+- **THEN** it requests them through `storage-broker` instead of touching host storage directly
 
-    /// Return lightweight metadata without reading the full file.
-    stat-file: func(path: string) -> result<file-stat, string>;
-}
+### Requirement: URI Validation
+The component SHALL accept only URIs with the `viking://` scheme and SHALL return an error for any other scheme.
 
-/// Persistent key-value partition managed by the Tachyon-Mesh host.
-/// Configured as disk-backed or memory-only in the deployment manifest.
-interface kv-partition {
-    get:    func(key: string) -> result<option<list<u8>>, string>;
-    set:    func(key: string, value: list<u8>) -> result<_, string>;
-    delete: func(key: string) -> result<_, string>;
-}
+#### Scenario: URI is malformed
+- **GIVEN** a URI without the `viking://` prefix
+- **WHEN** the agent calls `resolve`
+- **THEN** the component returns an invalid URI error
 
-// ── Component export ──────────────────────────────────────────────────────────
+### Requirement: L2 Raw Context
+The component SHALL return the exact UTF-8 file contents for `l2-raw` requests and bypass the semantic cache.
 
-interface viking-context {
-    /// Depth of the semantic context requested by the agent.
-    enum context-level {
-        l0-summary,    // High-level summary — lowest token cost
-        l1-structure,  // AST skeleton (signatures only) — medium token cost
-        l2-raw,        // Exact source code — highest token cost
-    }
+#### Scenario: Raw context is requested
+- **GIVEN** a valid `viking://` URI for a UTF-8 file
+- **WHEN** the agent requests `l2-raw`
+- **THEN** the response payload contains the raw file content and the resolved level is `l2-raw`
 
-    /// A resolved chunk of context ready for LLM prompt injection.
-    record context-response {
-        uri:            string,
-        /// Actual level resolved (may differ from request on non-Rust L1 fallback).
-        level:          context-level,
-        payload:        string,
-        /// Rough estimate: len(payload) / 4. Helps the agent manage its budget.
-        token-estimate: u32,
-    }
+### Requirement: L0 Summary Context
+The component SHALL produce a compact summary for `l0-summary` requests, including file path, line count, and public Rust items when the source parses as Rust.
 
-    /// Resolve a viking:// URI into a structured, token-efficient payload.
-    ///
-    /// Cache behaviour:
-    ///   - L0 and L1 payloads are looked up in the kv-partition by a key of
-    ///     the form `v1:{path}:{level}:{mtime_secs}`.
-    ///   - L2 bypasses the cache (raw content is already page-cached by the OS).
-    ///   - Cache misses trigger a read + semantic transform + best-effort write.
-    resolve: func(uri: string, level: context-level) -> result<context-response, string>;
-}
+#### Scenario: Rust file summary is requested
+- **GIVEN** a Rust source file with public functions, structs, enums, or traits
+- **WHEN** the agent requests `l0-summary`
+- **THEN** the response includes a concise summary listing those public items
 
-world viking-context-world {
-    import storage-broker;
-    import kv-partition;
-    export viking-context;
-}
-```
+### Requirement: L1 Structure Context
+The component SHALL produce an AST skeleton for Rust files requested at `l1-structure`, preserving declarations while omitting function bodies.
 
-## URI Scheme
+#### Scenario: Rust structure is requested
+- **GIVEN** a parseable Rust source file
+- **WHEN** the agent requests `l1-structure`
+- **THEN** the response includes signatures and type declarations without implementation bodies
 
-```
-viking://<repo-relative-path>
-```
+### Requirement: Non-Rust Or Parse Fallback
+The component SHALL fall back to raw content and set the resolved level to `l2-raw` when `l1-structure` is requested for non-Rust files or Rust parsing fails.
 
-Examples:
-- `viking://src/main.rs`
-- `viking://faas/viking-context/src/lib.rs`
+#### Scenario: Non-Rust file is requested at L1
+- **GIVEN** a non-Rust UTF-8 file
+- **WHEN** the agent requests `l1-structure`
+- **THEN** the response returns raw content and reports `l2-raw` as the resolved level
 
-## Error Conditions
+### Requirement: Cache Keyed By File Mtime
+The component SHALL cache L0 and L1 payloads in `kv-partition` using a key containing version, path, level, and file modification timestamp.
 
-| Condition | Behaviour |
-|-----------|-----------|
-| Missing `viking://` prefix | `Err("invalid viking URI: …")` |
-| File not found (stat or read) | `Err` propagated from storage-broker |
-| File is not valid UTF-8 | `Err("'<path>' is not valid UTF-8")` |
-| kv-partition write failure | Silently discarded; result still returned |
-| syn parse failure on L1 | Falls back to L2 raw; `resolved_level = l2-raw` |
-| L1 requested for non-Rust file | Falls back to L2 raw; `resolved_level = l2-raw` |
+#### Scenario: Cached summary is fresh
+- **GIVEN** a cached payload exists for the requested path, level, and modification timestamp
+- **WHEN** the agent requests that context
+- **THEN** the component returns the cached payload without recomputing it
 
-## Deployment Manifest Excerpt
+### Requirement: Best-Effort Cache Writes
+The component SHALL treat cache writes as best effort and SHALL still return a computed response when `kv-partition.set` fails.
 
-```yaml
-# manifests/tier1-local.yaml (indicative)
-component: viking-context
-role: user
-kv-partition:
-  name: viking-cache
-  persistence: disk-backed   # or memory-only for volatile-only cache
-```
+#### Scenario: Cache write fails
+- **GIVEN** the component computed an L0 or L1 payload
+- **WHEN** writing the cache entry fails
+- **THEN** the component returns the computed context response anyway
