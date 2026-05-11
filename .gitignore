@@ -4,6 +4,7 @@
 **/obj/*
 *.log
 *.vsix
+.pulsar/
 pulsar-vscode/dist/*
 **/.env.local
 **/.env.*.local

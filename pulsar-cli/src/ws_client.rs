@@ -8,6 +8,7 @@ pub async fn run(
     endpoint: String,
     init: ClientMessage,
     mut rx: mpsc::Receiver<ClientMessage>,
+    finish_tx: mpsc::Sender<()>,
 ) -> anyhow::Result<()> {
     let (socket, _) = connect_async(&endpoint)
         .await
@@ -31,7 +32,7 @@ pub async fn run(
                 let Some(message) = next else {
                     break;
                 };
-                handle_ws_message(message?)?;
+                handle_ws_message(message?, &finish_tx)?;
             }
         }
     }
@@ -47,9 +48,19 @@ pub fn handle_ws_text(payload: &str) -> anyhow::Result<String> {
     }
 }
 
-fn handle_ws_message(message: Message) -> anyhow::Result<()> {
+pub fn is_finish_action(payload: &str) -> bool {
+    matches!(
+        decode_server_message(payload),
+        Ok(ServerMessage::ActionEvent { action, .. }) if action == "finish"
+    )
+}
+
+fn handle_ws_message(message: Message, finish_tx: &mpsc::Sender<()>) -> anyhow::Result<()> {
     match message {
         Message::Text(payload) => {
+            if is_finish_action(&payload) {
+                let _ = finish_tx.try_send(());
+            }
             print!("{}", handle_ws_text(&payload)?);
             Ok(())
         }
@@ -77,5 +88,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(text, "[Agent write_file: src/lib.rs]");
+    }
+
+    #[test]
+    fn finish_action_is_detected() {
+        assert!(is_finish_action(
+            r#"{"type":"action_event","action":"finish","target":"session"}"#
+        ));
+        assert!(!is_finish_action(
+            r#"{"type":"action_event","action":"write_file","target":"src/lib.rs"}"#
+        ));
     }
 }
