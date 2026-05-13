@@ -1,0 +1,25 @@
+package tachyon:browser@1.0.0;
+
+interface cdp {
+    resource session {
+        constructor(endpoint: string);
+        navigate: func(url: string) -> result<_, string>;
+        evaluate-js: func(source: string) -> result<string, string>;
+        take-screenshot: func() -> result<list<u8>, string>;
+        close: func() -> result<_, string>;
+    }
+}
+
+interface inference {
+    generate: func(prompt: string, image: list<u8>) -> result<string, string>;
+}
+
+interface browser-agent {
+    validate-ui: func(url: string, task: string) -> result<string, string>;
+}
+
+world browser-agent-world {
+    import cdp;
+    import inference;
+    export browser-agent;
+}

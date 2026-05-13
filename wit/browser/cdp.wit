@@ -1,0 +1,11 @@
+package tachyon:browser@1.0.0;
+
+interface cdp {
+    resource session {
+        constructor(endpoint: string);
+        navigate: func(url: string) -> result<_, string>;
+        evaluate-js: func(source: string) -> result<string, string>;
+        take-screenshot: func() -> result<list<u8>, string>;
+        close: func() -> result<_, string>;
+    }
+}

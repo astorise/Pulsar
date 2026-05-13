@@ -16,6 +16,7 @@ interface inference {
     }
 
     generate: func(req: inference-request) -> result<inference-response, string>;
+    embed: func(model: string, text: string) -> result<list<f32>, string>;
 }
 
 interface viking-context {
@@ -33,6 +34,8 @@ interface viking-context {
     }
 
     resolve: func(uri: string, level: context-level) -> result<context-response, string>;
+    search: func(query: string) -> result<list<string>, string>;
+    graph-query: func(entity: string, depth: u32) -> result<list<string>, string>;
 }
 
 interface skill-extractor {
@@ -49,12 +52,27 @@ interface skill-extractor {
     extract: func(req: extraction-request) -> result<extraction-response, string>;
 }
 
+interface kv-partition {
+    resource table {
+        constructor(name: string);
+        get: func(key: string) -> result<option<list<u8>>, string>;
+        set: func(key: string, value: list<u8>) -> result<_, string>;
+        get-range: func(prefix: string, offset: u32, limit: u32) -> result<list<tuple<string, list<u8>>>, string>;
+        atomic-swap: func(deletes: list<string>, inserts: list<tuple<string, list<u8>>>) -> result<_, string>;
+    }
+}
+
 // Host-provided bridge implemented by Tachyon and the connected CLI.
 interface workspace-bridge {
     webdav-get: func(session-id: string, path: string) -> result<list<u8>, string>;
     webdav-put: func(session-id: string, path: string, contents: list<u8>) -> result<_, string>;
     webdav-propfind: func(session-id: string, path: string) -> result<list<string>, string>;
     websocket-command: func(session-id: string, command: string) -> result<string, string>;
+    lsp-hover: func(session-id: string, path: string, line: u32, character: u32) -> result<string, string>;
+    kv-set: func(key: string, value: list<u8>) -> result<_, string>;
+    kv-get: func(key: string) -> result<option<list<u8>>, string>;
+    emit-event: func(session-id: string, payload: string) -> result<_, string>;
+    merge-worktree: func(worktree-name: string) -> result<list<string>, string>;
 }
 
 interface orchestrator {
@@ -66,20 +84,26 @@ interface orchestrator {
 
     enum agent-status {
         idle,
+        planning,
+        recalling,
         thinking,
         acting,
         awaiting-user,
+        suspended,
+        escalated,
         finished,
     }
 
     start-session: func(cfg: session-config) -> result<string, string>;
     submit-input: func(session-id: string, text: string) -> result<_, string>;
+    resume-session: func(session-id: string, human-feedback: string) -> result<_, string>;
 }
 
 world orchestrator-world {
     import inference;
     import viking-context;
     import skill-extractor;
+    import kv-partition;
     import workspace-bridge;
     export orchestrator;
 }

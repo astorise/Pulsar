@@ -1,0 +1,20 @@
+package tachyon:ai@1.0.0;
+
+interface inference {
+    record inference-request {
+        model-id: string,
+        prompt: string,
+        max-tokens: u32,
+        temperature: f32,
+        lora-adapter: option<string>,
+    }
+
+    record inference-response {
+        text: string,
+        prompt-tokens: u32,
+        completion-tokens: u32,
+    }
+
+    generate: func(req: inference-request) -> result<inference-response, string>;
+    embed: func(model: string, text: string) -> result<list<f32>, string>;
+}

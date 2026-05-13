@@ -1,0 +1,11 @@
+package tachyon:ai@1.0.0;
+
+interface kv-partition {
+    resource table {
+        constructor(name: string);
+        get: func(key: string) -> result<option<list<u8>>, string>;
+        set: func(key: string, value: list<u8>) -> result<_, string>;
+        get-range: func(prefix: string, offset: u32, limit: u32) -> result<list<tuple<string, list<u8>>>, string>;
+        atomic-swap: func(deletes: list<string>, inserts: list<tuple<string, list<u8>>>) -> result<_, string>;
+    }
+}

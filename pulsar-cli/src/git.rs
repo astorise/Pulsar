@@ -100,6 +100,27 @@ impl Sandbox {
     }
 }
 
+pub fn merge_worktree(repo_root: &Path, worktree_branch: &str) -> anyhow::Result<Vec<String>> {
+    let merge = run_git(
+        repo_root,
+        &["merge", worktree_branch, "--no-commit", "--no-ff"],
+    );
+    if merge.is_err() {
+        return conflicted_files(repo_root);
+    }
+    conflicted_files(repo_root)
+}
+
+pub fn conflicted_files(repo_root: &Path) -> anyhow::Result<Vec<String>> {
+    let output = run_git(repo_root, &["diff", "--name-only", "--diff-filter=U"])?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 pub fn repo_root(cwd: &Path) -> anyhow::Result<Option<PathBuf>> {
     let output = Command::new("git")
         .arg("-C")
@@ -200,5 +221,15 @@ mod tests {
     #[test]
     fn empty_session_id_has_fallback() {
         assert_eq!(sanitize_session_id("!!!"), "session");
+    }
+
+    #[test]
+    fn conflict_output_can_be_parsed() {
+        let files = "src/lib.rs\nCargo.toml\n"
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(files, vec!["src/lib.rs", "Cargo.toml"]);
     }
 }

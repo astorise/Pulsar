@@ -42,6 +42,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'token', text: message.content });
       } else if (message.type === 'action_event') {
         this.post({ type: 'status', text: `${message.action}: ${message.target}` });
+      } else if (message.type === 'suspend') {
+        this.post({ type: 'status', text: `Suspended: ${message.instruction}` });
+      } else if (message.type === 'handshake') {
+        this.post({ type: 'status', text: `Plan approval requested:\n${JSON.stringify(message.plan, null, 2)}` });
+      } else if (message.type === 'escalated') {
+        this.post({ type: 'status', text: `Rabbit hole detected:\n${message.report}` });
+      } else if (message.type === 'kiln') {
+        this.post({ type: 'status', text: message.message });
+      } else if (message.type === 'lsp_hover_request') {
+        this.post({ type: 'status', text: `LSP hover requested: ${message.path}:${message.line}:${message.character}` });
       } else {
         this.post({ type: 'status', text: message.message });
       }

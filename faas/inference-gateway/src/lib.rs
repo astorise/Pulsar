@@ -35,6 +35,10 @@ mod component {
                 text,
             })
         }
+
+        fn embed(model: String, text: String) -> Result<Vec<f32>, String> {
+            super::embed_text(&model, &text)
+        }
     }
 
     export!(InferenceGateway);
@@ -89,6 +93,37 @@ pub fn estimate_tokens(text: &str) -> u32 {
     u32::try_from(text.len() / 4).unwrap_or(u32::MAX)
 }
 
+pub fn embed_text(model: &str, text: &str) -> Result<Vec<f32>, String> {
+    if model.trim().is_empty() {
+        return Err("model must not be empty".to_string());
+    }
+    if text.trim().is_empty() {
+        return Err("text must not be empty".to_string());
+    }
+
+    let mut vector = vec![0.0_f32; 32];
+    for token in text
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+    {
+        let mut hash = 2166136261_u32;
+        for byte in token.bytes() {
+            hash ^= u32::from(byte.to_ascii_lowercase());
+            hash = hash.wrapping_mul(16777619);
+        }
+        let idx = (hash as usize) % vector.len();
+        vector[idx] += 1.0;
+    }
+
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for value in &mut vector {
+            *value /= norm;
+        }
+    }
+    Ok(vector)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +169,15 @@ mod tests {
     #[test]
     fn output_tensor_decodes_utf8() {
         assert_eq!(decode_output_tensor(b"done").unwrap(), "done");
+    }
+
+    #[test]
+    fn embedding_is_normalized_and_deterministic() {
+        let first = embed_text("local-embed", "Session config parser").unwrap();
+        let second = embed_text("local-embed", "Session config parser").unwrap();
+        let norm = first.iter().map(|value| value * value).sum::<f32>().sqrt();
+
+        assert_eq!(first, second);
+        assert!((norm - 1.0).abs() < 0.0001);
     }
 }

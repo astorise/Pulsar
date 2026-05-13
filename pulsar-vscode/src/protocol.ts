@@ -7,6 +7,11 @@ export type ClientMessage =
   | {
       type: 'user_message';
       content: string;
+    }
+  | {
+      type: 'lsp_hover_response';
+      id: string;
+      markdown: string;
     };
 
 export type ServerMessage =
@@ -18,6 +23,32 @@ export type ServerMessage =
       type: 'action_event';
       action: string;
       target: string;
+    }
+  | {
+      type: 'lsp_hover_request';
+      id: string;
+      path: string;
+      line: number;
+      character: number;
+    }
+  | {
+      type: 'suspend';
+      instruction: string;
+      requires_feedback: boolean;
+    }
+  | {
+      type: 'handshake';
+      plan: unknown;
+    }
+  | {
+      type: 'escalated';
+      report: string;
+    }
+  | {
+      type: 'kiln';
+      message: string;
+      dataset_size: number;
+      training_submitted: boolean;
     }
   | {
       type: 'error';
@@ -33,6 +64,36 @@ export function parseServerMessage(payload: string): ServerMessage {
     value.type === 'action_event' &&
     typeof value.action === 'string' &&
     typeof value.target === 'string'
+  ) {
+    return value as ServerMessage;
+  }
+  if (
+    value.type === 'lsp_hover_request' &&
+    typeof value.id === 'string' &&
+    typeof value.path === 'string' &&
+    typeof value.line === 'number' &&
+    typeof value.character === 'number'
+  ) {
+    return value as ServerMessage;
+  }
+  if (
+    value.type === 'suspend' &&
+    typeof value.instruction === 'string' &&
+    typeof value.requires_feedback === 'boolean'
+  ) {
+    return value as ServerMessage;
+  }
+  if (value.type === 'handshake' && 'plan' in value) {
+    return value as ServerMessage;
+  }
+  if (value.type === 'escalated' && typeof value.report === 'string') {
+    return value as ServerMessage;
+  }
+  if (
+    value.type === 'kiln' &&
+    typeof value.message === 'string' &&
+    typeof value.dataset_size === 'number' &&
+    typeof value.training_submitted === 'boolean'
   ) {
     return value as ServerMessage;
   }

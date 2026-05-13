@@ -33,6 +33,26 @@ interface kv-partition {
 
     /// Remove a single entry. No-op if the key does not exist.
     delete: func(key: string) -> result<_, string>;
+
+    /// List cache keys visible to this component.
+    list-keys: func() -> result<list<string>, string>;
+}
+
+/// Graph storage resource provided by Tachyon-Mesh for semantic code edges.
+interface graph {
+    record edge {
+        subject: string,
+        predicate: string,
+        object: string,
+        properties: string,
+    }
+
+    resource workspace-graph {
+        constructor(name: string);
+        add-edges: func(edges: list<edge>) -> result<_, string>;
+        delete-edges: func(edges: list<edge>) -> result<_, string>;
+        traverse: func(subject: string, predicate: string, depth: u32) -> result<list<string>, string>;
+    }
 }
 
 /// Hierarchical code-context interface consumed by the Pulsar agent.
@@ -61,10 +81,17 @@ interface viking-context {
 
     /// Resolve a viking:// URI into a structured, token-efficient payload.
     resolve: func(uri: string, level: context-level) -> result<context-response, string>;
+
+    /// Search cached L0 summaries for matching keywords.
+    search: func(query: string) -> result<list<string>, string>;
+
+    /// Traverse the semantic graph for a code entity.
+    graph-query: func(entity: string, depth: u32) -> result<list<string>, string>;
 }
 
 world viking-context-world {
     import storage-broker;
     import kv-partition;
+    import graph;
     export viking-context;
 }

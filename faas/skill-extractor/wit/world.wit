@@ -20,6 +20,11 @@ interface inference {
 
 interface storage-broker {
     write-file: func(path: string, contents: list<u8>) -> result<_, string>;
+    append-file: func(path: string, contents: list<u8>) -> result<_, string>;
+}
+
+interface training {
+    submit-job: func(dataset-path: string, base-model: string) -> result<string, string>;
 }
 
 interface skill-extractor {
@@ -39,5 +44,6 @@ interface skill-extractor {
 world skill-extractor-world {
     import inference;
     import storage-broker;
+    import training;
     export skill-extractor;
 }

@@ -47,7 +47,12 @@ export class PulsarClient {
         return;
       }
       try {
-        this.emit({ kind: 'message', message: parseServerMessage(event.data) });
+        const message = parseServerMessage(event.data);
+        if (message.type === 'lsp_hover_request') {
+          void this.respondToHoverRequest(message);
+          return;
+        }
+        this.emit({ kind: 'message', message });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.emit({ kind: 'status', text: message });
@@ -77,9 +82,58 @@ export class PulsarClient {
     this.socket.send(JSON.stringify(message));
   }
 
+  private async respondToHoverRequest(message: Extract<ServerMessage, { type: 'lsp_hover_request' }>): Promise<void> {
+    try {
+      const uri = parseWorkspaceUri(message.path);
+      const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+        'vscode.executeHoverProvider',
+        uri,
+        new vscode.Position(message.line, message.character)
+      );
+      this.sendRaw({
+        type: 'lsp_hover_response',
+        id: message.id,
+        markdown: formatHovers(hovers ?? [])
+      });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      this.sendRaw({
+        type: 'lsp_hover_response',
+        id: message.id,
+        markdown: `Hover failed: ${text}`
+      });
+    }
+  }
+
   private emit(event: PulsarEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }
   }
+}
+
+function parseWorkspaceUri(path: string): vscode.Uri {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) {
+    return vscode.Uri.parse(path);
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+  return folder ? vscode.Uri.joinPath(folder, path) : vscode.Uri.file(path);
+}
+
+function formatHovers(hovers: vscode.Hover[]): string {
+  return hovers
+    .flatMap((hover) => hover.contents)
+    .map(formatMarkedString)
+    .filter((part) => part.trim().length > 0)
+    .join('\n\n---\n\n');
+}
+
+function formatMarkedString(value: vscode.MarkdownString | vscode.MarkedString): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if ('language' in value && 'value' in value) {
+    return `\`\`\`${value.language}\n${value.value}\n\`\`\``;
+  }
+  return value.value;
 }

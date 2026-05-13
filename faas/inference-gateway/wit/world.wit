@@ -16,6 +16,7 @@ interface inference {
     }
 
     generate: func(req: inference-request) -> result<inference-response, string>;
+    embed: func(model: string, text: string) -> result<list<f32>, string>;
 }
 
 // Host-provided Tachyon bridge to the active wasi-nn backend.

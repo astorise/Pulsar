@@ -44,6 +44,30 @@ pub fn handle_ws_text(payload: &str) -> anyhow::Result<String> {
     match decode_server_message(payload)? {
         ServerMessage::StreamToken { content } => Ok(content),
         ServerMessage::ActionEvent { action, target } => Ok(format!("[Agent {action}: {target}]")),
+        ServerMessage::LspHoverRequest {
+            id,
+            path,
+            line,
+            character,
+        } => Ok(format!(
+            "[LSP hover requested: {id} {path}:{line}:{character}]"
+        )),
+        ServerMessage::Suspend {
+            instruction,
+            requires_feedback,
+        } => Ok(format!(
+            "[Agent suspended{}]\n{instruction}\n",
+            if requires_feedback {
+                ": feedback required"
+            } else {
+                ""
+            }
+        )),
+        ServerMessage::Handshake { plan } => Ok(format!("[Plan approval requested]\n{plan}\n")),
+        ServerMessage::Escalated { report } => Ok(format!(
+            "WARNING: RABBIT HOLE DETECTED. Handing over Situation Report...\n{report}\n"
+        )),
+        ServerMessage::Kiln { message, .. } => Ok(format!("{message}\n")),
         ServerMessage::Error { message } => Ok(format!("[Agent error: {message}]")),
     }
 }
@@ -98,5 +122,13 @@ mod tests {
         assert!(!is_finish_action(
             r#"{"type":"action_event","action":"write_file","target":"src/lib.rs"}"#
         ));
+    }
+
+    #[test]
+    fn escalated_message_is_high_visibility() {
+        let text = handle_ws_text(r##"{"type":"escalated","report":"# Situation"}"##).unwrap();
+
+        assert!(text.contains("RABBIT HOLE DETECTED"));
+        assert!(text.contains("# Situation"));
     }
 }

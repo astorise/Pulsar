@@ -1,6 +1,7 @@
 mod git;
 mod protocol;
 mod repl;
+mod skillify;
 mod webdav;
 mod ws_client;
 
@@ -16,6 +17,26 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = CliConfig::from_env()?;
+    if env::args().nth(1).as_deref() == Some("skillify") {
+        let summary = skillify::run(&config.workspace_root)?;
+        println!("{summary}");
+        return Ok(());
+    }
+    if env::args().nth(1).as_deref() == Some("merge-worktree") {
+        let branch = env::args()
+            .nth(2)
+            .context("merge-worktree requires a branch name")?;
+        let repo_root = git::repo_root(&config.workspace_root)?
+            .context("merge-worktree must be run inside a git repository")?;
+        let conflicts = git::merge_worktree(&repo_root, &branch)?;
+        if conflicts.is_empty() {
+            println!("Merge completed without conflicts.");
+        } else {
+            println!("{}", conflicts.join("\n"));
+        }
+        return Ok(());
+    }
+
     let token = webdav::generate_token();
     let sandbox = git::Sandbox::create(&config.workspace_root, &token)?;
     let webdav_root = sandbox

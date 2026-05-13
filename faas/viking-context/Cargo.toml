@@ -10,7 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # syn is always needed: business logic runs on native for unit tests
-syn = { version = "2", features = ["full"] }
+syn = { version = "2", features = ["full", "visit"] }
 
 # wit-bindgen is only required when targeting WASM
 [target.'cfg(target_arch = "wasm32")'.dependencies]

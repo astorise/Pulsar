@@ -1,0 +1,26 @@
+[
+  {
+    "name": "cargo-compile-progress",
+    "commands": ["cargo"],
+    "pattern": "^\\s*(Compiling|Checking|Finished|Running|Doc-tests|Blocking waiting for file lock)",
+    "enabled": true
+  },
+  {
+    "name": "npm-lifecycle",
+    "commands": ["npm", "pnpm", "yarn", "node"],
+    "pattern": "^\\s*(added|audited|funding|npm notice|> )",
+    "enabled": true
+  },
+  {
+    "name": "git-progress",
+    "commands": ["git"],
+    "pattern": "^\\s*(Enumerating|Counting|Compressing|Receiving|Resolving) objects",
+    "enabled": true
+  },
+  {
+    "name": "java-gradle-progress",
+    "commands": ["gradle", "mvn", "java"],
+    "pattern": "^\\s*(Downloading|BUILD SUCCESSFUL|BUILD FAILED|\\[INFO\\])",
+    "enabled": true
+  }
+]

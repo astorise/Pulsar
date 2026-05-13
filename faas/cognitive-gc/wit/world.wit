@@ -1,0 +1,24 @@
+package tachyon:ai@1.0.0;
+
+interface inference {
+    generate: func(prompt: string) -> result<string, string>;
+    embed: func(model: string, text: string) -> result<list<f32>, string>;
+}
+
+interface kv-partition {
+    resource table {
+        constructor(name: string);
+        get-range: func(prefix: string, offset: u32, limit: u32) -> result<list<tuple<string, list<u8>>>, string>;
+        atomic-swap: func(deletes: list<string>, inserts: list<tuple<string, list<u8>>>) -> result<_, string>;
+    }
+}
+
+interface cognitive-gc {
+    sweep: func() -> result<u32, string>;
+}
+
+world cognitive-gc-world {
+    import inference;
+    import kv-partition;
+    export cognitive-gc;
+}
