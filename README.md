@@ -1,91 +1,63 @@
-# 🌌 Pulsar: Distributed Autonomous Engineering Swarm
+# Pulsar
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Host: Tachyon-Mesh](https://img.shields.io/badge/Host-Tachyon--Mesh-blueviolet)](https://github.com/astorise/tachyon-mesh)
-[![Built with Rust](https://img.shields.io/badge/Language-Rust-orange)](https://www.rust-lang.org/)
-[![Wasm Component Model](https://img.shields.io/badge/Runtime-WebAssembly-624de3)](https://component-model.bytecodealliance.org/)
-[![Database RedDB](https://img.shields.io/badge/DB-RedDB-red)](https://github.com/crawfx/redb)
+Pulsar is a distributed autonomous engineering system built on Tachyon-Mesh. It runs specialized Rust WebAssembly components as isolated FaaS agents, coordinates them through a thin CLI, and keeps shared project context in Viking Context so agents can work with bounded memory and predictable escalation.
 
-**Pulsar** est une plateforme d'ingénierie logicielle distribuée et autonome, conçue pour transformer des modèles de langage en une équipe d'ingénierie cohérente. S'appuyant sur l'infrastructure [Tachyon-Mesh](https://github.com/astorise/tachyon-mesh), Pulsar exécute des agents spécialisés sous forme de composants WebAssembly isolés, capables de collaborer massivement en parallèle tout en optimisant dynamiquement les ressources matérielles locales.
+## Vision
 
-## 🚀 Vision : L'Empathie Synthétique
+Pulsar turns language models into a coordinated engineering loop instead of a single chat surface. The system is designed around explicit planning, context-aware execution, automatic escalation, and durable learning from successful work.
 
-Pulsar n'est pas un scribe, c'est un **Collègue Dialectique**. Le système est bâti sur une méthodologie d'interaction rigoureuse visant à garantir l'alignement cognitif entre l'humain et la machine :
-1.  **Context Handshake :** L'agent soumet un plan d'exécution structuré pour validation humaine avant toute modification du code.
-2.  **Rabbit Hole Detection :** Détection automatique des boucles de raisonnement infructueuses, déclenchant la génération d'un rapport de situation (`SITUATION_REPORT.md`) plutôt que de persister dans l'erreur.
-3.  **Human Action Bridge :** Suspension asynchrone à coût de calcul nul pour solliciter une action physique ou un jugement qualitatif de l'utilisateur.
+Core goals:
 
----
+- Keep humans in control with clear planning and resumable sessions.
+- Run agents as sandboxed WebAssembly components on Tachyon-Mesh.
+- Use tiered inference so simple work stays local and hard work escalates.
+- Capture reusable skills from successful resolutions.
+- Keep context compact through Viking summaries, structure views, and targeted reads.
 
-## 🏗️ Architecture & Escalation Topology
+## Current State
 
-Pulsar repose sur une architecture découplée, séparant l'Orchestrateur (CLI), le Middleware de Contexte (Viking), et un protocole strict d'escalade d'inférence à 3 niveaux.
+The repository currently contains:
+
+- FaaS crates for orchestration, context retrieval, inference routing, skill extraction, supervision, cognitive cleanup, and browser automation.
+- A thin `pulsar-cli` client for starting sessions against a Tachyon-Mesh workspace.
+- OpenSpec proposals and archived specs describing the product direction.
+- Workspace CI for tests, clippy, and secret scanning.
+
+Pulsar is still early-stage infrastructure. The crates are structured for native unit tests and WebAssembly component builds, while deeper Tachyon-Mesh host integration is implemented incrementally through OpenSpec changes.
+
+## Architecture
 
 ```text
-+-----------------------------------------------------------------+
-|                     Pulsar CLI (Orchestrator)                   |
-|  [Parallel Worktrees]  [MCP Local Tools]  [Context Management]  |
-+-----------------------------------------------------------------+
-        |                         |                         |
-   1. Request                2. Escalate               3. Escalate
-        |                         |                         |
-        v                         v                         v
-+--------------------+  +--------------------+  +--------------------+
-| TIER 1: Local Edge |  | TIER 2: Local Node |  | TIER 3: Cloud API  |
-| (Dell G15 3070ti)  |  | (Talos Cluster)    |  | (DeepSeek/Claude)  |
-|--------------------|  |--------------------|  |--------------------|
-| 7B Model + LoRA    |  | 27B Coder Model    |  | Hosted LLM         |
-| Ultra-low latency  |  | Heavy reasoning    |  | Prompt Caching     |
-| [ESCALATES DOUBT]  |  [ESCALATES ON FAIL]  |  |                    |
-+--------------------+  +--------------------+  +--------------------+
-        ^                         ^                         ^
-        |                         |                         |
-========|=========================|=========================|========
-        |       Context Sharing & Semantic Compression      |
-        v                         v                         v
-+-----------------------------------------------------------------+
-|             Viking Context Middleware FaaS (RAG)                |
-|      [ L0: Summaries ]  [ L1: AST/Signatures ]  [ L2: Raw ]     |
-+-----------------------------------------------------------------+
-                                  |
-                           (Async Update)
-                                  v
-+-----------------------------------------------------------------+
-|            Skill Extractor FaaS (Autonomous Learning)           |
-|    Monitors successful resolutions -> Generates SKILL.md        |
-|    workflows to permanently improve Tier 1 & Tier 2 efficiency  |
-+-----------------------------------------------------------------+
+pulsar-cli
+  |
+  v
+orchestrator FaaS
+  |-- viking-context FaaS
+  |-- inference-gateway FaaS
+  |-- skill-extractor FaaS
+  |-- supervisor FaaS
+  |-- cognitive-gc FaaS
+  `-- browser-agent FaaS
+
+Tachyon-Mesh provides the component runtime, host APIs, workspace bridge, KV storage, and isolation boundary.
 ```
 
-### 🧠 Le Workflow d'Exécution
-1.  **Abstraction Viking :** Le système interroge le middleware pour obtenir une vue compressée du code (L1 AST).
-2.  **Inférence Tiered :** Le Tier 1 (7B local) traite les tâches simples. En cas de doute, le Tier 2 (27B sur cluster Talos) prend le relais en utilisant le streaming de poids natif pour économiser la VRAM. Le Tier 3 (Cloud) est le filet de sécurité ultime.
-3.  **Apprentissage Continu :** Chaque succès alimente le dataset local pour un Fine-Tuning LoRA natif, permettant au Tier 1 de gagner en expertise sur votre codebase spécifique.
+## Development
 
----
+Run the full local check set:
 
-## ⚙️ Capacités Avancées de l'Essaim
+```bash
+cargo test --workspace
+cargo test --test wasm_e2e_runner
+cargo clippy --workspace --all-targets -- -D warnings
+```
 
-* **Supervisor (Map-Reduce) :** Décomposition des Epics en sous-tâches exécutées en parallèle dans des Git Worktrees isolés.
-* **Paginated MCP Memory :** Mémoire partagée via RedDB paginée pour éviter les crashs OOM dans WebAssembly.
-* **Cognitive Garbage Collector :** Résolution asynchrone des contradictions factuelles via des transactions atomiques (`atomic-swap`).
-* **SmolVM Browser Agent :** Tests d'interfaces (CDP) isolés dans des MicroVMs jetables pour une sécurité totale.
+Validate OpenSpec artifacts:
 
----
+```bash
+openspec validate --all --strict --no-interactive
+```
 
-## 🛠️ Inspirations et Remerciements
+## License
 
-Pulsar est une synthèse architecturale des projets les plus novateurs de la communauté :
-
-* **[OpenViking](https://github.com/volcengine/OpenViking) :** La fondation du Middleware de Contexte pour l'extraction sémantique et la gestion des niveaux L0-L2.
-* **[gstack](https://github.com/garrytan/gstack) :** Pour le standard `SKILL.md` (Markdown-as-Code), le moteur de contradictions et l'automatisation CDP.
-* **[Nous Hermes](https://github.com/NousResearch/Hermes-LLM) :** Pour les bases de modèles de raisonnement ayant inspiré nos protocoles d'escalade Tier 1 & 2.
-* **[Kiln-AI](https://github.com/Kiln-AI/Kiln) :** Pour la structure du pipeline de génération de datasets à partir des traces d'exécution.
-* **[Tachyon-Mesh](https://github.com/astorise/tachyon-mesh) :** Le socle d'infrastructure natif (FaaS, MicroVM, Training).
-
-## ⚖️ Licence
-
-Ce projet est distribué sous la **Licence MIT**.
-
----
-*Développé avec passion par [astorise](https://github.com/astorise).*
+Pulsar is distributed under the MIT License.

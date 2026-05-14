@@ -19,9 +19,9 @@ mod component {
 
     impl Guest for Orchestrator {
         fn start_session(cfg: SessionConfig) -> Result<String, String> {
+            let _workspace_token = super::resolve_workspace_token(Some(&cfg.workspace_token))?;
             let config = super::SessionConfig {
                 workspace_url: cfg.workspace_url,
-                workspace_token: cfg.workspace_token,
                 max_tier: cfg.max_tier,
             };
             let session = super::Session::new(config)?;
@@ -46,6 +46,7 @@ mod component {
             session.record_user_input(&text);
             session.status = super::AgentStatus::Recalling;
             let past_skill = discover_skill(&session.id, &text);
+            session.active_skill = past_skill.as_ref().map(|skill| skill.adapter_id.clone());
 
             session.status = super::AgentStatus::Thinking;
             let context_uri = super::viking_uri_for_prompt(&text);
@@ -65,17 +66,11 @@ mod component {
                 &session.trace,
                 &context.payload,
                 &text,
-                past_skill.as_deref(),
+                past_skill.as_ref().map(|skill| skill.content.as_str()),
                 non_empty(&swarm_intel),
                 approved_plan.as_deref(),
             );
-            let response = inference::generate(&inference::InferenceRequest {
-                model_id: super::model_for_tier(session.config.max_tier).to_string(),
-                prompt,
-                max_tokens: 1024,
-                temperature: 0.1,
-                lora_adapter: session.active_skill.clone(),
-            })?;
+            let response = generate_with_escalation(session, prompt, 1024)?;
             session.record_token_usage(response.prompt_tokens + response.completion_tokens);
             increment_token_counter(
                 &session.id,
@@ -173,16 +168,27 @@ mod component {
                         .record_observation("planning_required", "You must use submit_plan first");
                     return Ok(());
                 }
-                workspace_bridge::webdav_put(&session.id, &path, contents.as_bytes())?;
-                session.record_observation("edit_file", &format!("updated {path}"));
-                let _ = broadcast_to_swarm(session, &format!("updated {path}"));
+                let guard = super::PathGuard::workspace();
+                let guarded_path = guard.validate(&path).map_err(super::format_tool_error)?;
+                workspace_bridge::webdav_put(&session.id, &guarded_path, contents.as_bytes())?;
+                session.record_observation("edit_file", &format!("updated {guarded_path}"));
+                let _ = broadcast_to_swarm(session, &format!("updated {guarded_path}"));
             }
-            super::ToolCall::RunCommand { command } => {
+            super::ToolCall::RunCommand {
+                command,
+                executable,
+                args,
+            } => {
                 if !session.has_approved_plan() {
                     session
                         .record_observation("planning_required", "You must use submit_plan first");
                     return Ok(());
                 }
+                let command_request = super::CommandRequest::from_tool(command, executable, args)
+                    .map_err(super::format_tool_error)?;
+                let command = command_request
+                    .validated_display()
+                    .map_err(super::format_tool_error)?;
                 let raw = workspace_bridge::websocket_command(&session.id, &command)
                     .unwrap_or_else(|err| format!("ERROR: {err}"));
                 let cleaned = super::clean_output(&command, &raw);
@@ -255,16 +261,72 @@ mod component {
         Ok(())
     }
 
-    fn discover_skill(session_id: &str, prompt: &str) -> Option<String> {
+    fn discover_skill(session_id: &str, prompt: &str) -> Option<super::SkillSelection> {
         let skills = workspace_bridge::webdav_propfind(session_id, ".pulsar/skills").ok()?;
         let selected = super::match_skill(prompt, &skills)?;
         let path = if selected.starts_with(".pulsar/skills/") {
-            selected
+            selected.clone()
         } else {
             format!(".pulsar/skills/{selected}")
         };
         let bytes = workspace_bridge::webdav_get(session_id, &path).ok()?;
-        String::from_utf8(bytes).ok()
+        Some(super::SkillSelection {
+            adapter_id: super::adapter_id_from_skill_path(&selected),
+            content: String::from_utf8(bytes).ok()?,
+        })
+    }
+
+    fn generate_with_escalation(
+        session: &mut super::Session,
+        prompt: String,
+        max_tokens: u32,
+    ) -> Result<inference::InferenceResponse, String> {
+        let tiers = super::tiers_for_max(session.config.max_tier);
+        let mut last_error = None;
+
+        for (idx, tier) in tiers.iter().enumerate() {
+            let response = inference::generate(&inference::InferenceRequest {
+                model_id: tier.model.to_string(),
+                prompt: prompt.clone(),
+                max_tokens,
+                temperature: 0.1,
+                lora_adapter: session.active_skill.clone(),
+            });
+
+            match response {
+                Ok(response) if super::response_needs_escalation(&response.text) => {
+                    if let Some(next) = tiers.get(idx + 1) {
+                        session.record_escalation(tier.model, next.model, "rabbit_hole_detected");
+                        tracing::info!(
+                            from_tier = tier.model,
+                            to_tier = next.model,
+                            reason = "rabbit_hole_detected",
+                            "orchestrator inference escalation"
+                        );
+                        continue;
+                    }
+                    return Ok(response);
+                }
+                Ok(response) => return Ok(response),
+                Err(err) if super::error_needs_escalation(&err) => {
+                    if let Some(next) = tiers.get(idx + 1) {
+                        session.record_escalation(tier.model, next.model, &err);
+                        tracing::info!(
+                            from_tier = tier.model,
+                            to_tier = next.model,
+                            reason = err.as_str(),
+                            "orchestrator inference escalation"
+                        );
+                        last_error = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| "inference escalation exhausted".to_string()))
     }
 
     fn suspend_session(session: &super::Session) -> Result<(), String> {
@@ -333,14 +395,180 @@ mod component {
 }
 
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path, PathBuf};
 
 pub const FAILURE_ESCALATION_THRESHOLD: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub workspace_url: String,
-    pub workspace_token: String,
     pub max_tier: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillSelection {
+    pub adapter_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelTier {
+    pub level: u32,
+    pub model: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolError {
+    UnauthorizedAccess { path: String },
+    CommandForbidden { command: String },
+    CommandInjection { command: String },
+    InvalidCommand { message: String },
+}
+
+impl ToolError {
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::UnauthorizedAccess { .. } => "UnauthorizedAccess",
+            Self::CommandForbidden { .. } => "CommandForbidden",
+            Self::CommandInjection { .. } => "CommandInjectionDetected",
+            Self::InvalidCommand { .. } => "InvalidCommand",
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::UnauthorizedAccess { path } => {
+                format!("Access to '{path}' is forbidden. You are restricted to the workspace directory.")
+            }
+            Self::CommandForbidden { command } => {
+                format!("Command '{command}' is not in the orchestrator allowlist.")
+            }
+            Self::CommandInjection { command } => {
+                format!("Command '{command}' contains shell control operators and was rejected.")
+            }
+            Self::InvalidCommand { message } => message.clone(),
+        }
+    }
+}
+
+pub fn format_tool_error(error: ToolError) -> String {
+    serde_json::json!({
+        "status": "error",
+        "reason": error.reason(),
+        "message": error.message(),
+    })
+    .to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathGuard {
+    workspace_root: PathBuf,
+}
+
+impl PathGuard {
+    pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
+        Self {
+            workspace_root: workspace_root.into(),
+        }
+    }
+
+    pub fn workspace() -> Self {
+        Self::new(".")
+    }
+
+    pub fn validate(&self, raw_path: &str) -> Result<String, ToolError> {
+        if raw_path.contains('\0') || raw_path.contains("../") || raw_path.contains("..\\") {
+            return Err(ToolError::UnauthorizedAccess {
+                path: raw_path.to_string(),
+            });
+        }
+
+        let path = Path::new(raw_path);
+        if path.is_absolute() {
+            return Err(ToolError::UnauthorizedAccess {
+                path: raw_path.to_string(),
+            });
+        }
+
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::Normal(part) => normalized.push(part),
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(ToolError::UnauthorizedAccess {
+                        path: raw_path.to_string(),
+                    });
+                }
+            }
+        }
+
+        if normalized.as_os_str().is_empty() {
+            return Ok(".".to_string());
+        }
+
+        let joined = self.workspace_root.join(&normalized);
+        if joined
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err(ToolError::UnauthorizedAccess {
+                path: raw_path.to_string(),
+            });
+        }
+
+        Ok(normalized.to_string_lossy().replace('\\', "/"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRequest {
+    executable: String,
+    args: Vec<String>,
+}
+
+impl CommandRequest {
+    pub fn from_tool(
+        command: Option<String>,
+        executable: Option<String>,
+        args: Vec<String>,
+    ) -> Result<Self, ToolError> {
+        if let Some(executable) = executable {
+            return Ok(Self { executable, args });
+        }
+
+        let command = command.ok_or_else(|| ToolError::InvalidCommand {
+            message: "run_command requires either `command` or `cmd`.".to_string(),
+        })?;
+        parse_legacy_command(&command)
+    }
+
+    pub fn validated_display(&self) -> Result<String, ToolError> {
+        if !is_allowed_command(&self.executable) {
+            return Err(ToolError::CommandForbidden {
+                command: self.executable.clone(),
+            });
+        }
+
+        if self
+            .args
+            .iter()
+            .any(|arg| contains_shell_operator(arg) || arg.contains('\0'))
+        {
+            return Err(ToolError::CommandInjection {
+                command: self.display(),
+            });
+        }
+
+        Ok(self.display())
+    }
+
+    fn display(&self) -> String {
+        std::iter::once(self.executable.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,7 +660,12 @@ pub enum ToolCall {
         contents: String,
     },
     RunCommand {
-        command: String,
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default, alias = "cmd")]
+        executable: Option<String>,
+        #[serde(default)]
+        args: Vec<String>,
     },
     RequestHumanAction {
         instruction: String,
@@ -506,6 +739,13 @@ impl Session {
         self.token_usage = self.token_usage.saturating_add(u64::from(tokens));
     }
 
+    pub fn record_escalation(&mut self, from_tier: &str, to_tier: &str, reason: &str) {
+        self.record_observation(
+            "inference_escalation",
+            &format!("{from_tier} -> {to_tier}: {reason}"),
+        );
+    }
+
     pub fn trace_json(&self) -> Result<String, String> {
         serde_json::to_string(&self.trace).map_err(|err| err.to_string())
     }
@@ -514,9 +754,6 @@ impl Session {
 pub fn validate_session_config(config: &SessionConfig) -> Result<(), String> {
     if normalize_workspace_url(&config.workspace_url)?.is_empty() {
         return Err("workspace-url must not be empty".to_string());
-    }
-    if config.workspace_token.trim().is_empty() {
-        return Err("workspace-token must not be empty".to_string());
     }
     if config.max_tier == 0 {
         return Err("max-tier must be at least 1".to_string());
@@ -540,13 +777,36 @@ pub fn build_session_id(config: &SessionConfig) -> String {
     for byte in config
         .workspace_url
         .bytes()
-        .chain(config.workspace_token.bytes())
         .chain(config.max_tier.to_le_bytes())
     {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(1099511628211);
     }
     format!("sess-{hash:016x}")
+}
+
+pub fn resolve_workspace_token(provided: Option<&str>) -> Result<String, String> {
+    match provided.map(str::trim).filter(|token| !token.is_empty()) {
+        Some(token) => Ok(token.to_string()),
+        None => workspace_token_from_env(),
+    }
+}
+
+pub fn workspace_token_from_env() -> Result<String, String> {
+    std::env::var("WORKSPACE_TOKEN")
+        .map(|token| token.trim().to_string())
+        .map_err(|_| "workspace-token must be provided by host or WORKSPACE_TOKEN".to_string())
+        .and_then(|token| {
+            if token.is_empty() {
+                Err("workspace-token must not be empty".to_string())
+            } else {
+                Ok(token)
+            }
+        })
+}
+
+pub fn authorization_header_from_env() -> Result<String, String> {
+    resolve_workspace_token(None).map(|token| format!("Bearer {token}"))
 }
 
 pub fn webdav_path(workspace_url: &str, path: &str) -> Result<String, String> {
@@ -612,7 +872,7 @@ Return exactly one JSON object using one of these forms:
 {{"tool":"query_graph","entity":"struct:module::Type","depth":2}}
 {{"tool":"ask_lsp","path":"src/lib.rs","line":1,"character":1}}
 {{"tool":"edit_file","path":"repo/path","contents":"new file contents"}}
-{{"tool":"run_command","command":"cargo test"}}
+{{"tool":"run_command","cmd":"cargo","args":["test"]}}
 {{"tool":"request_human_action","instruction":"check the rendered UI","requires_feedback":true}}
 {{"tool":"finish","summary":"done"}}"#
     )
@@ -646,11 +906,43 @@ pub fn viking_uri_for_prompt(prompt: &str) -> String {
 }
 
 pub fn model_for_tier(max_tier: u32) -> &'static str {
-    if max_tier >= 2 {
-        "qwen-coder-27b"
-    } else {
-        "qwen-coder-7b"
+    match max_tier {
+        0 | 1 => "qwen-coder-7b",
+        2 => "qwen-coder-27b",
+        _ => "claude-3-opus",
     }
+}
+
+pub fn tiers_for_max(max_tier: u32) -> Vec<ModelTier> {
+    (1..=max_tier.clamp(1, 3))
+        .map(|level| ModelTier {
+            level,
+            model: model_for_tier(level),
+        })
+        .collect()
+}
+
+pub fn response_needs_escalation(text: &str) -> bool {
+    text.contains("<rabbit_hole_detected>")
+}
+
+pub fn error_needs_escalation(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("resourceexhausted")
+        || normalized.contains("resource exhausted")
+        || normalized.contains("timeout")
+        || normalized.contains("timed out")
+}
+
+pub fn adapter_id_from_skill_path(path: &str) -> String {
+    let file_name = match path.rsplit('/').next() {
+        Some(name) => name,
+        None => path,
+    };
+    file_name
+        .trim_end_matches(".md")
+        .trim_end_matches(".json")
+        .to_string()
 }
 
 pub fn learning_trace_payload(task: &str, trace: &[TraceEvent]) -> Result<String, String> {
@@ -708,6 +1000,39 @@ pub fn command_failure_target(command: &str) -> String {
         .take(2)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub fn parse_legacy_command(command: &str) -> Result<CommandRequest, ToolError> {
+    if contains_shell_operator(command) || command.contains('\0') {
+        return Err(ToolError::CommandInjection {
+            command: command.to_string(),
+        });
+    }
+
+    let parts = shell_words::split(command).map_err(|err| ToolError::InvalidCommand {
+        message: format!("failed to parse command: {err}"),
+    })?;
+    let mut parts = parts.into_iter();
+    let executable = parts.next().ok_or_else(|| ToolError::InvalidCommand {
+        message: "command must not be empty".to_string(),
+    })?;
+    Ok(CommandRequest {
+        executable,
+        args: parts.collect(),
+    })
+}
+
+pub fn is_allowed_command(command: &str) -> bool {
+    matches!(
+        command,
+        "cargo" | "npm" | "node" | "git" | "rustc" | "ls" | "cat" | "rg" | "echo"
+    )
+}
+
+pub fn contains_shell_operator(value: &str) -> bool {
+    [";", "|", "&&", "||", "`", "$(", ">", "<"]
+        .iter()
+        .any(|operator| value.contains(operator))
 }
 
 pub fn build_situation_report_prompt(task: &str, trace: &[TraceEvent]) -> String {
@@ -774,30 +1099,53 @@ fn tokenize(input: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn must<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(err) => panic!("unexpected error: {err:?}"),
+        }
+    }
+
     fn config() -> SessionConfig {
         SessionConfig {
             workspace_url: "http://127.0.0.1:49152/workspace/".to_string(),
-            workspace_token: "secret".to_string(),
             max_tier: 2,
         }
     }
 
     #[test]
-    fn session_config_validates_url_token_and_tier() {
+    fn session_config_validates_url_and_tier_without_persisted_token() {
         assert!(validate_session_config(&config()).is_ok());
 
         let mut invalid = config();
         invalid.max_tier = 0;
+        match validate_session_config(&invalid) {
+            Ok(()) => panic!("expected max-tier validation failure"),
+            Err(err) => assert_eq!(err, "max-tier must be at least 1"),
+        }
+
+        let session = must(Session::new(config()));
         assert_eq!(
-            validate_session_config(&invalid).unwrap_err(),
-            "max-tier must be at least 1"
+            session.config.workspace_url,
+            "http://127.0.0.1:49152/workspace/"
         );
+    }
+
+    #[test]
+    fn workspace_token_is_resolved_then_dropped_from_session_config() {
+        let resolved = must(resolve_workspace_token(Some(" secret ")));
+        assert_eq!(resolved, "secret");
+
+        let session = must(Session::new(config()));
+        let serialized = must(serde_json::to_string(&session));
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("workspace_token"));
     }
 
     #[test]
     fn webdav_paths_are_joined_without_double_slash() {
         assert_eq!(
-            webdav_path("http://localhost:8080/root/", "/src/main.rs").unwrap(),
+            must(webdav_path("http://localhost:8080/root/", "/src/main.rs")),
             "http://localhost:8080/root/src/main.rs"
         );
     }
@@ -835,8 +1183,8 @@ mod tests {
     fn parses_json_tool_call_inside_model_text() {
         let call = parse_tool_call(
             "next:\n{\"tool\":\"edit_file\",\"path\":\"src/lib.rs\",\"contents\":\"ok\"}",
-        )
-        .unwrap();
+        );
+        let call = must(call);
 
         assert_eq!(
             call,
@@ -850,25 +1198,32 @@ mod tests {
     #[test]
     fn parses_new_tool_calls() {
         assert!(matches!(
-            parse_tool_call(r#"{"tool":"search_viking_context","query":"SessionConfig"}"#).unwrap(),
+            must(parse_tool_call(
+                r#"{"tool":"search_viking_context","query":"SessionConfig"}"#
+            )),
             ToolCall::SearchVikingContext { .. }
         ));
         assert!(matches!(
-            parse_tool_call(
+            must(parse_tool_call(
                 r#"{"tool":"request_human_action","instruction":"check UI","requires_text_feedback":true}"#
-            )
-            .unwrap(),
+            )),
             ToolCall::RequestHumanAction { .. }
+        ));
+        assert!(matches!(
+            must(parse_tool_call(
+                r#"{"tool":"run_command","cmd":"cargo","args":["test"]}"#
+            )),
+            ToolCall::RunCommand { .. }
         ));
     }
 
     #[test]
     fn session_records_trace_as_json() {
-        let mut session = Session::new(config()).unwrap();
+        let mut session = must(Session::new(config()));
         session.record_user_input("fix faas/orchestrator/src/lib.rs");
         session.record_observation("run_command", "ok");
 
-        let json = session.trace_json().unwrap();
+        let json = must(session.trace_json());
         assert!(json.contains("fix faas/orchestrator/src/lib.rs"));
         assert!(json.contains("run_command"));
     }
@@ -885,6 +1240,30 @@ mod tests {
     fn tier_selects_expected_model() {
         assert_eq!(model_for_tier(1), "qwen-coder-7b");
         assert_eq!(model_for_tier(2), "qwen-coder-27b");
+        assert_eq!(model_for_tier(3), "claude-3-opus");
+
+        let tiers = tiers_for_max(3);
+        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers[0].model, "qwen-coder-7b");
+        assert_eq!(tiers[2].model, "claude-3-opus");
+    }
+
+    #[test]
+    fn escalation_triggers_are_detected() {
+        assert!(response_needs_escalation(
+            "I am stuck <rabbit_hole_detected>"
+        ));
+        assert!(error_needs_escalation("ResourceExhausted: no vram"));
+        assert!(error_needs_escalation("request timed out"));
+        assert!(!error_needs_escalation("invalid prompt"));
+    }
+
+    #[test]
+    fn skill_path_becomes_adapter_id() {
+        assert_eq!(
+            adapter_id_from_skill_path(".pulsar/skills/refactor-parser.md"),
+            "refactor-parser"
+        );
     }
 
     #[test]
@@ -910,7 +1289,7 @@ mod tests {
 
     #[test]
     fn command_failures_escalate_on_same_target() {
-        let mut session = Session::new(config()).unwrap();
+        let mut session = must(Session::new(config()));
         for _ in 0..3 {
             session.record_command_result("cargo test", "error: failed");
         }
@@ -927,6 +1306,55 @@ mod tests {
             mcp_observation_key("sess", 1),
             "v1:mcp:0000000000000001:sess"
         );
+    }
+
+    #[test]
+    fn path_guard_blocks_traversal_and_absolute_paths() {
+        let guard = PathGuard::workspace();
+
+        assert!(matches!(
+            guard.validate("../../../etc/passwd"),
+            Err(ToolError::UnauthorizedAccess { .. })
+        ));
+        assert!(matches!(
+            guard.validate("/etc/passwd"),
+            Err(ToolError::UnauthorizedAccess { .. })
+        ));
+        assert!(matches!(
+            guard.validate("src/lib.rs\0"),
+            Err(ToolError::UnauthorizedAccess { .. })
+        ));
+        assert_eq!(
+            must(guard.validate("./faas/orchestrator/src/lib.rs")),
+            "faas/orchestrator/src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn command_sandbox_blocks_injection_and_disallowed_commands() {
+        assert!(matches!(
+            parse_legacy_command(r#"echo "test"; rm -rf /"#),
+            Err(ToolError::CommandInjection { .. })
+        ));
+
+        let forbidden = CommandRequest::from_tool(
+            None,
+            Some("powershell".to_string()),
+            vec!["Remove-Item".to_string()],
+        );
+        let forbidden = must(forbidden);
+        assert!(matches!(
+            forbidden.validated_display(),
+            Err(ToolError::CommandForbidden { .. })
+        ));
+
+        let allowed = CommandRequest::from_tool(
+            None,
+            Some("cargo".to_string()),
+            vec!["test".to_string(), "--workspace".to_string()],
+        );
+        let allowed = must(must(allowed).validated_display());
+        assert_eq!(allowed, "cargo test --workspace");
     }
 
     #[test]

@@ -4,17 +4,24 @@ use std::sync::LazyLock;
 
 const MAX_LINES: usize = 120;
 
-static ANSI_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").expect("valid ANSI regex"));
+static ANSI_RE: LazyLock<Regex> = LazyLock::new(|| match Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]") {
+    Ok(regex) => regex,
+    Err(err) => panic!("valid ANSI regex: {err}"),
+});
 
 static FILTER_RULES: LazyLock<Vec<FilterRule>> = LazyLock::new(|| {
-    let raw: Vec<RawFilterRule> =
-        serde_json::from_str(include_str!("../../filters.json")).expect("valid filters.json");
+    let raw: Vec<RawFilterRule> = match serde_json::from_str(include_str!("../../filters.json")) {
+        Ok(rules) => rules,
+        Err(err) => panic!("valid filters.json: {err}"),
+    };
     raw.into_iter()
         .filter(|rule| rule.enabled)
         .map(|rule| FilterRule {
             commands: rule.commands,
-            regex: Regex::new(&rule.pattern).expect("valid filter regex"),
+            regex: match Regex::new(&rule.pattern) {
+                Ok(regex) => regex,
+                Err(err) => panic!("valid filter regex: {err}"),
+            },
         })
         .collect()
 });

@@ -11,111 +11,25 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # ── Unit tests (native target) ──────────────────────────────────────────────
-  test-viking-context:
-    name: "Tests: faas/viking-context"
+  test:
+    name: Cargo test workspace
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: faas/viking-context
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.85.0
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: faas/viking-context
 
       - name: cargo test
-        run: cargo test --lib
+        run: cargo test --workspace
 
-  test-skill-extractor:
-    name: "Tests: faas/skill-extractor"
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: faas/skill-extractor
-    steps:
-      - uses: actions/checkout@v4
+      - name: wasm e2e runner
+        run: cargo test --test wasm_e2e_runner
 
-      - uses: dtolnay/rust-toolchain@1.85.0
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: faas/skill-extractor
-
-      - name: cargo test
-        run: cargo test --lib
-
-  test-inference-gateway:
-    name: "Tests: faas/inference-gateway"
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: faas/inference-gateway
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.85.0
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: faas/inference-gateway
-
-      - name: cargo test
-        run: cargo test --lib
-
-  test-orchestrator:
-    name: "Tests: faas/orchestrator"
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: faas/orchestrator
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.85.0
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: faas/orchestrator
-
-      - name: cargo test
-        run: cargo test --lib
-
-  test-pulsar-cli:
-    name: "Tests: pulsar-cli"
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: pulsar-cli
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.85.0
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: pulsar-cli
-
-      - name: cargo test
-        run: cargo test
-
-  # ── Lint ────────────────────────────────────────────────────────────────────
   clippy:
-    name: "Clippy: ${{ matrix.crate }}"
+    name: Clippy workspace
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        crate:
-          - faas/viking-context
-          - faas/inference-gateway
-          - faas/skill-extractor
-          - faas/orchestrator
-    defaults:
-      run:
-        working-directory: ${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v4
 
@@ -124,8 +38,16 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ${{ matrix.crate }}
 
-      - name: clippy
-        run: cargo clippy --lib -- -D warnings
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  secrets:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2

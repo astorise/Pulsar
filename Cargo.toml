@@ -1,5 +1,12 @@
+[package]
+name = "pulsar-workspace"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
 [workspace]
 members = [
+    ".",
     "faas/browser-agent",
     "faas/cognitive-gc",
     "faas/inference-gateway",
@@ -10,6 +17,7 @@ members = [
     "pulsar-cli",
 ]
 default-members = [
+    ".",
     "faas/browser-agent",
     "faas/cognitive-gc",
     "faas/inference-gateway",
@@ -31,10 +39,20 @@ rmp-serde = "1"
 rustyline = "17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+shell-words = "1"
 syn = { version = "2", features = ["full", "visit"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1"
 wit-bindgen = "=0.43.0"
+
+[dev-dependencies]
+anyhow = { workspace = true }
+orchestrator = { path = "faas/orchestrator" }
+tempfile = "3"
+test-log = "0.2"
+wasmtime = "26.0.1"
+wasmtime-wasi = "26.0.1"
 
 [profile.release]
 opt-level = "s"
