@@ -14,7 +14,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── WASM Components (cargo-component → wasm32-wasip1) ──────────────────────
+  # ── WASM Components (cargo build → wasm32-wasip1) ──────────────────────────
   build-faas:
     name: "Build WASM: faas components"
     runs-on: ubuntu-latest
@@ -27,42 +27,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Cache both component crates + the cargo-component binary itself
+          # Cache workspace targets and registries without restoring cargo shims.
           cache-on-failure: true
+          cache-bin: false
 
-      - name: Install cargo-component
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-component
-
-      - name: Configure cargo-component registry
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
-        run: |
-          cp wasm-pkg.toml "$RUNNER_TEMP/wasm-pkg.toml"
-          cat >> "$RUNNER_TEMP/wasm-pkg.toml" <<EOF
-
-          [registry."tachyon-mesh-wit".oci]
-          auth = { username = "$GHCR_USER", password = "$GHCR_TOKEN" }
-          EOF
-          echo "CARGO_COMPONENT_CONFIG_FILE=$RUNNER_TEMP/wasm-pkg.toml" >> "$GITHUB_ENV"
-
-      - name: Build viking-context
-        working-directory: faas/viking-context
-        run: cargo component build --release
-
-      - name: Build skill-extractor
-        working-directory: faas/skill-extractor
-        run: cargo component build --release
-
-      - name: Build inference-gateway
-        working-directory: faas/inference-gateway
-        run: cargo component build --release
-
-      - name: Build orchestrator
-        working-directory: faas/orchestrator
-        run: cargo component build --release
+      - name: Build FaaS crates
+        run: cargo build --release --target wasm32-wasip1
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
@@ -96,6 +66,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: pulsar-cli
+          cache-bin: false
 
       - name: Build
         run: cargo build --release
