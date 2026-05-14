@@ -10,16 +10,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── WASM Components (cargo-component → wasm32-wasip2) ──────────────────────
+  # ── WASM Components (cargo-component → wasm32-wasip1) ──────────────────────
   build-faas:
     name: "Build WASM: faas components"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.85.0
         with:
-          targets: wasm32-wasip2
+          targets: wasm32-wasip1
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -52,10 +52,7 @@ jobs:
         with:
           name: wasm-components
           path: |
-            faas/viking-context/target/wasm32-wasip2/release/*.wasm
-            faas/skill-extractor/target/wasm32-wasip2/release/*.wasm
-            faas/inference-gateway/target/wasm32-wasip2/release/*.wasm
-            faas/orchestrator/target/wasm32-wasip2/release/*.wasm
+            target/wasm32-wasip1/release/*.wasm
           if-no-files-found: warn
 
   # ── CLI (native binary) ─────────────────────────────────────────────────────
@@ -77,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.85.0
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -90,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pulsar-cli-${{ matrix.os }}
-          path: pulsar-cli/target/release/${{ matrix.artifact }}
+          path: target/release/${{ matrix.artifact }}
 
   build-vscode-extension:
     name: "Build VS Code web extension"

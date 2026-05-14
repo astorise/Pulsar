@@ -1,11 +1,11 @@
 use anyhow::Context;
 use axum::{
-    Router,
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
+    Router,
 };
 use std::{
     net::SocketAddr,
@@ -168,15 +168,16 @@ pub fn resolve_workspace_path(root: &FsPath, request_path: &str) -> Result<PathB
 }
 
 pub fn build_propfind_xml(entries: &[String]) -> String {
-    let responses = entries
-        .iter()
-        .map(|entry| {
-            format!(
-                "<d:response><d:href>{}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>",
-                escape_xml(entry)
-            )
-        })
-        .collect::<String>();
+    use std::fmt::Write as _;
+
+    let mut responses = String::new();
+    for entry in entries {
+        let _ = write!(
+            responses,
+            "<d:response><d:href>{}</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>",
+            escape_xml(entry)
+        );
+    }
 
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:">{responses}</d:multistatus>"#

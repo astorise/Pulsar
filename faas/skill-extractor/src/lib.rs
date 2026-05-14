@@ -125,7 +125,7 @@ pub fn sharegpt_jsonl(task: &str, filtered_trace: &str) -> Result<String, String
 }
 
 pub fn should_submit_training(dataset_size: usize, threshold: usize) -> bool {
-    threshold > 0 && dataset_size >= threshold && dataset_size.is_multiple_of(threshold)
+    threshold > 0 && dataset_size >= threshold && dataset_size % threshold == 0
 }
 
 pub fn generated_example_count(jsonl: &str) -> usize {

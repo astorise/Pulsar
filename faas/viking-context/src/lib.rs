@@ -20,8 +20,8 @@ mod component {
             // L2 is the raw file — no AST work, no benefit to caching.
             if matches!(level, ContextLevel::L2Raw) {
                 let bytes = storage_broker::read_file(&path)?;
-                let payload = String::from_utf8(bytes)
-                    .map_err(|_| format!("'{path}' is not valid UTF-8"))?;
+                let payload =
+                    String::from_utf8(bytes).map_err(|_| format!("'{path}' is not valid UTF-8"))?;
                 return Ok(ContextResponse {
                     uri,
                     level,
@@ -56,8 +56,8 @@ mod component {
 
             // ── Cache miss: read file and compute payload ─────────────────────
             let bytes = storage_broker::read_file(&path)?;
-            let raw = String::from_utf8(bytes)
-                .map_err(|_| format!("'{path}' is not valid UTF-8"))?;
+            let raw =
+                String::from_utf8(bytes).map_err(|_| format!("'{path}' is not valid UTF-8"))?;
 
             let (payload, resolved) = match level {
                 ContextLevel::L0Summary => {
@@ -67,7 +67,10 @@ mod component {
                     if path.ends_with(".rs") {
                         let edges = super::extract_rust_graph_edges(&path, &raw);
                         commit_graph_edges(&edges);
-                        (super::extract_rust_skeleton(&raw), ContextLevel::L1Structure)
+                        (
+                            super::extract_rust_skeleton(&raw),
+                            ContextLevel::L1Structure,
+                        )
                     } else {
                         // Non-Rust files: return raw, note the fallback in level.
                         (raw, ContextLevel::L2Raw)
@@ -200,7 +203,10 @@ pub fn build_summary(path: &str, content: &str) -> String {
     let line_count = content.lines().count();
     let mut out = format!("# {path}\nLines: {line_count}\n");
 
-    if path.ends_with(".rs") && let Ok(file) = syn::parse_file(content) {
+    if path.ends_with(".rs") {
+        let Ok(file) = syn::parse_file(content) else {
+            return out;
+        };
         let pub_items: Vec<String> = file
             .items
             .iter()
@@ -398,9 +404,12 @@ impl<'ast> syn::visit::Visit<'ast> for GraphVisitor {
     }
 
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
-        if let Some((_, trait_path, _)) = &node.trait_
-            && let Some(self_ty) = type_path_name(&node.self_ty)
-            && let Some(trait_name) = trait_path
+        if let Some((_, trait_path, _)) = &node.trait_ {
+            let Some(self_ty) = type_path_name(&node.self_ty) else {
+                syn::visit::visit_item_impl(self, node);
+                return;
+            };
+            let Some(trait_name) = trait_path
                 .segments
                 .iter()
                 .map(|segment| segment.ident.to_string())
@@ -409,7 +418,10 @@ impl<'ast> syn::visit::Visit<'ast> for GraphVisitor {
                     acc.push_str(&next);
                     acc
                 })
-        {
+            else {
+                syn::visit::visit_item_impl(self, node);
+                return;
+            };
             self.push(
                 format!(
                     "struct:{}::{}",
@@ -428,7 +440,11 @@ impl<'ast> syn::visit::Visit<'ast> for GraphVisitor {
 fn write_item_skeleton(out: &mut String, item: &syn::Item) {
     match item {
         syn::Item::Fn(f) => {
-            let async_kw = if f.sig.asyncness.is_some() { "async " } else { "" };
+            let async_kw = if f.sig.asyncness.is_some() {
+                "async "
+            } else {
+                ""
+            };
             let inputs: Vec<String> = f
                 .sig
                 .inputs
@@ -473,7 +489,11 @@ fn write_item_skeleton(out: &mut String, item: &syn::Item) {
             out.push_str(&format!("trait {} {{\n", t.ident));
             for ti in &t.items {
                 if let syn::TraitItem::Fn(m) = ti {
-                    let async_kw = if m.sig.asyncness.is_some() { "async " } else { "" };
+                    let async_kw = if m.sig.asyncness.is_some() {
+                        "async "
+                    } else {
+                        ""
+                    };
                     out.push_str(&format!("    {async_kw}fn {}(...);\n", m.sig.ident));
                 }
             }
@@ -495,7 +515,11 @@ fn write_item_skeleton(out: &mut String, item: &syn::Item) {
             out.push_str(&format!("{header} {{\n"));
             for ii in &i.items {
                 if let syn::ImplItem::Fn(m) = ii {
-                    let async_kw = if m.sig.asyncness.is_some() { "async " } else { "" };
+                    let async_kw = if m.sig.asyncness.is_some() {
+                        "async "
+                    } else {
+                        ""
+                    };
                     out.push_str(&format!(
                         "    {async_kw}fn {}(...) {{ /* ... */ }}\n",
                         m.sig.ident
@@ -660,7 +684,10 @@ mod tests {
             "Public: struct SessionConfig, fn run",
             "session config"
         ));
-        assert!(!summary_matches_query("Public: struct SessionConfig", "session missing"));
+        assert!(!summary_matches_query(
+            "Public: struct SessionConfig",
+            "session missing"
+        ));
     }
 
     // ── estimate_tokens ───────────────────────────────────────────────────────

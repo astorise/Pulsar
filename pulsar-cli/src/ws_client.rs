@@ -1,5 +1,5 @@
-use crate::protocol::{ClientMessage, ServerMessage, decode_server_message, encode_client_message};
-use anyhow::{Context, bail};
+use crate::protocol::{decode_server_message, encode_client_message, ClientMessage, ServerMessage};
+use anyhow::{bail, Context};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
