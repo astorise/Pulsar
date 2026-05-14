@@ -20,5 +20,5 @@ wit-bindgen = { workspace = true }
 package = "tachyon:ai"
 
 [package.metadata.component.dependencies]
-"tachyon:ai" = "oci://ghcr.io/astorise/tachyon-mesh-wit:0.9.0-rc.1"
-"tachyon:mesh" = "oci://ghcr.io/astorise/tachyon-mesh-wit:0.9.0-rc.1"
+"tachyon:ai" = { package = "astorise:tachyon-mesh-wit", version = "0.9.0-rc.1", registry = "tachyon-mesh-wit" }
+"tachyon:mesh" = { package = "astorise:tachyon-mesh-wit", version = "0.9.0-rc.1", registry = "tachyon-mesh-wit" }

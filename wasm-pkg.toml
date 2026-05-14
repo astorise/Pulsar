@@ -1,0 +1,9 @@
+# cargo-component reads this config when CARGO_COMPONENT_CONFIG_FILE points at it.
+# It maps the Tachyon WIT package dependency to its GHCR OCI artifact:
+# ghcr.io/astorise/tachyon-mesh-wit:0.9.0-rc.1
+
+[package_registry_overrides]
+"astorise:tachyon-mesh-wit" = { registry = "tachyon-mesh-wit", metadata = { preferredProtocol = "oci", "oci" = { registry = "ghcr.io", namespacePrefix = "" } } }
+
+[registry."tachyon-mesh-wit"]
+default = "oci"

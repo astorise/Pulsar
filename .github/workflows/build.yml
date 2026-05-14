@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -30,6 +34,19 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-component
+
+      - name: Configure cargo-component registry
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          cp wasm-pkg.toml "$RUNNER_TEMP/wasm-pkg.toml"
+          cat >> "$RUNNER_TEMP/wasm-pkg.toml" <<EOF
+
+          [registry."tachyon-mesh-wit".oci]
+          auth = { username = "$GHCR_USER", password = "$GHCR_TOKEN" }
+          EOF
+          echo "CARGO_COMPONENT_CONFIG_FILE=$RUNNER_TEMP/wasm-pkg.toml" >> "$GITHUB_ENV"
 
       - name: Build viking-context
         working-directory: faas/viking-context
