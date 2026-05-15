@@ -1,8 +1,7 @@
 # cognitive-gc Specification
 
-## Purpose
-Define how Pulsar compacts stale or contradictory shared observations into durable memory facts.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: Embedding Interface
 The `inference` interface SHALL expose `embed(model, text)` for semantic vector generation.
 
