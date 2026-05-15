@@ -1,0 +1,41 @@
+{
+  "name": "pulsar-cli",
+  "version": "0.1.0",
+  "description": "Pulsar local CLI bridge (Node.js port of pulsar-cli) — WebDAV workspace + WebSocket client + sandbox.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "bin": {
+    "pulsar-cli": "dist/main.cjs"
+  },
+  "files": [
+    "dist",
+    "src",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --banner:js=\"#!/usr/bin/env node\"",
+    "build:dev": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --sourcemap",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx src/__tests__/protocol.test.ts src/__tests__/git.test.ts src/__tests__/ws-client.test.ts src/__tests__/skillify.test.ts src/__tests__/webdav.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "inquirer": "^9.3.0",
+    "msgpackr": "^1.11.0",
+    "simple-git": "^3.27.0",
+    "webdav-server": "^2.6.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

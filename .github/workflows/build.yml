@@ -42,40 +42,36 @@ jobs:
             target/wasm32-wasip1/release/*.wasm
           if-no-files-found: warn
 
-  # ── CLI (native binary) ─────────────────────────────────────────────────────
+  # ── CLI (Node.js bundle) ────────────────────────────────────────────────────
   build-cli:
-    name: "Build CLI: pulsar-cli (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact: pulsar-cli
-          - os: windows-latest
-            artifact: pulsar-cli.exe
-          - os: macos-latest
-            artifact: pulsar-cli
+    name: "Build CLI: pulsar-cli (Node.js)"
+    runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: pulsar-cli
+        working-directory: pulsar-cli-node
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.85.0
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
         with:
-          workspaces: pulsar-cli
-          cache-bin: false
+          node-version: 20
+          cache: npm
+          cache-dependency-path: pulsar-cli-node/package-lock.json
 
-      - name: Build
-        run: cargo build --release
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build bundle
+        run: npm run build
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pulsar-cli-${{ matrix.os }}
-          path: target/release/${{ matrix.artifact }}
+          name: pulsar-cli-node
+          path: pulsar-cli-node/dist/main.cjs
 
   build-vscode-extension:
     name: "Build VS Code web extension"
