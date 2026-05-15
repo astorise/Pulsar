@@ -525,7 +525,7 @@ impl PathGuard {
     }
 
     pub fn validate(&self, raw_path: &str) -> Result<String, ToolError> {
-        if raw_path.contains('\0') {
+        if raw_path.contains('\0') || raw_path.contains('\\') {
             return Err(ToolError::UnauthorizedAccess {
                 path: raw_path.to_string(),
             });
@@ -1454,6 +1454,10 @@ mod tests {
 
         assert!(matches!(
             guard.validate("../../../etc/passwd"),
+            Err(ToolError::UnauthorizedAccess { .. })
+        ));
+        assert!(matches!(
+            guard.validate("..\\etc\\passwd"),
             Err(ToolError::UnauthorizedAccess { .. })
         ));
         assert!(matches!(
