@@ -27,7 +27,6 @@
     "inquirer": "^9.3.0",
     "msgpackr": "^1.11.0",
     "simple-git": "^3.27.0",
-    "webdav-server": "^2.6.2",
     "ws": "^8.18.0"
   },
   "devDependencies": {
