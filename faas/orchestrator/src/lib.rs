@@ -146,8 +146,13 @@ mod component {
                 session.record_observation("search_viking_context", &matches.join("\n"));
             }
             super::ToolCall::ReadVikingContext { uri } => {
-                let resolved =
-                    viking_context::resolve(&uri, viking_context::ContextLevel::L1Structure)?;
+                let guard = super::PathGuard::workspace();
+                let guarded_uri =
+                    super::guarded_viking_uri(&uri, &guard).map_err(super::format_tool_error)?;
+                let resolved = viking_context::resolve(
+                    &guarded_uri,
+                    viking_context::ContextLevel::L1Structure,
+                )?;
                 session.record_observation("read_viking_context", &resolved.payload);
             }
             super::ToolCall::QueryGraph { entity, depth } => {
@@ -159,7 +164,10 @@ mod component {
                 line,
                 character,
             } => {
-                let hover = workspace_bridge::lsp_hover(&session.id, &path, line, character)?;
+                let guard = super::PathGuard::workspace();
+                let guarded_path = guard.validate(&path).map_err(super::format_tool_error)?;
+                let hover =
+                    workspace_bridge::lsp_hover(&session.id, &guarded_path, line, character)?;
                 session.record_observation("ask_lsp", &hover);
             }
             super::ToolCall::EditFile { path, contents } => {
@@ -186,13 +194,28 @@ mod component {
                 }
                 let command_request = super::CommandRequest::from_tool(command, executable, args)
                     .map_err(super::format_tool_error)?;
-                let command = command_request
-                    .validated_display()
+                command_request
+                    .validate()
                     .map_err(super::format_tool_error)?;
-                let raw = workspace_bridge::websocket_command(&session.id, &command)
-                    .unwrap_or_else(|err| format!("ERROR: {err}"));
+                let command = command_request.display();
+                let command_result = workspace_bridge::websocket_command(
+                    &session.id,
+                    command_request.executable(),
+                    command_request.args(),
+                );
+                let (exit_code, raw) = match command_result {
+                    Ok(result) => (
+                        result.exit_code,
+                        super::format_command_result(
+                            result.exit_code,
+                            &result.stdout,
+                            &result.stderr,
+                        ),
+                    ),
+                    Err(err) => (-1, format!("ERROR: {err}")),
+                };
                 let cleaned = super::clean_output(&command, &raw);
-                session.record_command_result(&command, &cleaned);
+                session.record_command_result_status(&command, exit_code, &cleaned);
                 session.record_observation("run_command", &cleaned);
                 let _ = broadcast_to_swarm(session, &cleaned);
                 if session.consecutive_failures >= super::FAILURE_ESCALATION_THRESHOLD {
@@ -250,9 +273,12 @@ mod component {
     }
 
     fn crawl_workspace(session_id: &str) -> Result<(), String> {
-        let entries = workspace_bridge::webdav_propfind(session_id, ".")?;
+        let guard = super::PathGuard::workspace();
+        let root = guard.validate(".").map_err(super::format_tool_error)?;
+        let entries = workspace_bridge::webdav_propfind(session_id, &root)?;
         for entry in entries
             .iter()
+            .filter_map(|entry| guard.validate(entry).ok())
             .filter(|entry| super::is_indexable_workspace_path(entry))
         {
             let uri = format!("viking://{entry}");
@@ -262,14 +288,17 @@ mod component {
     }
 
     fn discover_skill(session_id: &str, prompt: &str) -> Option<super::SkillSelection> {
-        let skills = workspace_bridge::webdav_propfind(session_id, ".pulsar/skills").ok()?;
+        let guard = super::PathGuard::workspace();
+        let skills_path = guard.validate(".pulsar/skills").ok()?;
+        let skills = workspace_bridge::webdav_propfind(session_id, &skills_path).ok()?;
         let selected = super::match_skill(prompt, &skills)?;
         let path = if selected.starts_with(".pulsar/skills/") {
             selected.clone()
         } else {
             format!(".pulsar/skills/{selected}")
         };
-        let bytes = workspace_bridge::webdav_get(session_id, &path).ok()?;
+        let guarded_path = guard.validate(&path).ok()?;
+        let bytes = workspace_bridge::webdav_get(session_id, &guarded_path).ok()?;
         Some(super::SkillSelection {
             adapter_id: super::adapter_id_from_skill_path(&selected),
             content: String::from_utf8(bytes).ok()?,
@@ -477,7 +506,7 @@ impl PathGuard {
     }
 
     pub fn validate(&self, raw_path: &str) -> Result<String, ToolError> {
-        if raw_path.contains('\0') || raw_path.contains("../") || raw_path.contains("..\\") {
+        if raw_path.contains('\0') {
             return Err(ToolError::UnauthorizedAccess {
                 path: raw_path.to_string(),
             });
@@ -495,7 +524,14 @@ impl PathGuard {
             match component {
                 Component::Normal(part) => normalized.push(part),
                 Component::CurDir => {}
-                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                Component::ParentDir => {
+                    if !normalized.pop() {
+                        return Err(ToolError::UnauthorizedAccess {
+                            path: raw_path.to_string(),
+                        });
+                    }
+                }
+                Component::RootDir | Component::Prefix(_) => {
                     return Err(ToolError::UnauthorizedAccess {
                         path: raw_path.to_string(),
                     });
@@ -521,6 +557,15 @@ impl PathGuard {
     }
 }
 
+pub fn guarded_viking_uri(raw_uri: &str, guard: &PathGuard) -> Result<String, ToolError> {
+    let path = raw_uri
+        .strip_prefix("viking://")
+        .ok_or_else(|| ToolError::UnauthorizedAccess {
+            path: raw_uri.to_string(),
+        })?;
+    guard.validate(path).map(|path| format!("viking://{path}"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandRequest {
     executable: String,
@@ -543,8 +588,8 @@ impl CommandRequest {
         parse_legacy_command(&command)
     }
 
-    pub fn validated_display(&self) -> Result<String, ToolError> {
-        if !is_allowed_command(&self.executable) {
+    pub fn validate(&self) -> Result<(), ToolError> {
+        if !is_allowed_command(&self.executable, &self.args) {
             return Err(ToolError::CommandForbidden {
                 command: self.executable.clone(),
             });
@@ -560,10 +605,18 @@ impl CommandRequest {
             });
         }
 
-        Ok(self.display())
+        Ok(())
     }
 
-    fn display(&self) -> String {
+    pub fn executable(&self) -> &str {
+        &self.executable
+    }
+
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    pub fn display(&self) -> String {
         std::iter::once(self.executable.as_str())
             .chain(self.args.iter().map(String::as_str))
             .collect::<Vec<_>>()
@@ -720,8 +773,16 @@ impl Session {
     }
 
     pub fn record_command_result(&mut self, command: &str, output: &str) {
+        self.record_command_result_status(
+            command,
+            command_exit_code_for_legacy_output(output),
+            output,
+        );
+    }
+
+    pub fn record_command_result_status(&mut self, command: &str, exit_code: i32, _output: &str) {
         let target = command_failure_target(command);
-        if command_output_succeeded(output) {
+        if command_exit_code_succeeded(exit_code) {
             self.consecutive_failures = 0;
             self.last_failed_target = None;
             return;
@@ -986,12 +1047,34 @@ pub fn is_indexable_workspace_path(path: &str) -> bool {
 }
 
 pub fn command_output_succeeded(output: &str) -> bool {
+    command_exit_code_for_legacy_output(output) == 0
+}
+
+fn command_exit_code_for_legacy_output(output: &str) -> i32 {
     let lower = output.to_ascii_lowercase();
-    !(lower.contains("error:")
+    if lower.contains("error:")
         || lower.contains("failed")
         || lower.contains("panicked")
         || lower.contains("exit code")
-        || lower.contains("traceback"))
+        || lower.contains("traceback")
+    {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn command_exit_code_succeeded(exit_code: i32) -> bool {
+    exit_code == 0
+}
+
+pub fn format_command_result(exit_code: i32, stdout: &str, stderr: &str) -> String {
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (false, true) => stdout.to_string(),
+        (true, false) => format!("exit code {exit_code}\n{stderr}"),
+        (false, false) => format!("exit code {exit_code}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"),
+        (true, true) => format!("exit code {exit_code}"),
+    }
 }
 
 pub fn command_failure_target(command: &str) -> String {
@@ -1022,10 +1105,48 @@ pub fn parse_legacy_command(command: &str) -> Result<CommandRequest, ToolError> 
     })
 }
 
-pub fn is_allowed_command(command: &str) -> bool {
+pub fn is_allowed_command(command: &str, args: &[String]) -> bool {
+    if command == "git" {
+        return is_allowed_git_command(args);
+    }
+
     matches!(
         command,
-        "cargo" | "npm" | "node" | "git" | "rustc" | "ls" | "cat" | "rg" | "echo"
+        "cargo" | "npm" | "node" | "rustc" | "ls" | "cat" | "rg" | "echo"
+    )
+}
+
+pub fn is_allowed_git_command(args: &[String]) -> bool {
+    if args.iter().any(|arg| {
+        arg == "-C"
+            || arg == "--exec-path"
+            || arg.starts_with("-c")
+            || arg.starts_with("--exec-path=")
+    }) {
+        return false;
+    }
+
+    let Some(verb) = args.first().map(String::as_str) else {
+        return false;
+    };
+
+    matches!(
+        verb,
+        "status"
+            | "diff"
+            | "log"
+            | "add"
+            | "commit"
+            | "branch"
+            | "switch"
+            | "push"
+            | "pull"
+            | "fetch"
+            | "rebase"
+            | "merge"
+            | "tag"
+            | "show"
+            | "checkout"
     )
 }
 
@@ -1328,6 +1449,15 @@ mod tests {
             must(guard.validate("./faas/orchestrator/src/lib.rs")),
             "faas/orchestrator/src/lib.rs"
         );
+        assert_eq!(must(guard.validate("src/../Cargo.toml")), "Cargo.toml");
+        assert_eq!(
+            must(guarded_viking_uri("viking://src/../Cargo.toml", &guard)),
+            "viking://Cargo.toml"
+        );
+        assert!(matches!(
+            guarded_viking_uri("file://Cargo.toml", &guard),
+            Err(ToolError::UnauthorizedAccess { .. })
+        ));
     }
 
     #[test]
@@ -1344,7 +1474,7 @@ mod tests {
         );
         let forbidden = must(forbidden);
         assert!(matches!(
-            forbidden.validated_display(),
+            forbidden.validate(),
             Err(ToolError::CommandForbidden { .. })
         ));
 
@@ -1353,8 +1483,60 @@ mod tests {
             Some("cargo".to_string()),
             vec!["test".to_string(), "--workspace".to_string()],
         );
-        let allowed = must(must(allowed).validated_display());
-        assert_eq!(allowed, "cargo test --workspace");
+        let allowed = must(allowed);
+        must(allowed.validate());
+        assert_eq!(allowed.display(), "cargo test --workspace");
+    }
+
+    #[test]
+    fn command_sandbox_restricts_git_configuration_and_verbs() {
+        let allowed = must(CommandRequest::from_tool(
+            None,
+            Some("git".to_string()),
+            vec!["status".to_string(), "--short".to_string()],
+        ));
+        assert!(allowed.validate().is_ok());
+
+        let blocked_config = must(CommandRequest::from_tool(
+            None,
+            Some("git".to_string()),
+            vec![
+                "-c".to_string(),
+                "core.sshCommand=bad".to_string(),
+                "status".to_string(),
+            ],
+        ));
+        assert!(matches!(
+            blocked_config.validate(),
+            Err(ToolError::CommandForbidden { .. })
+        ));
+
+        let blocked_verb = must(CommandRequest::from_tool(
+            None,
+            Some("git".to_string()),
+            vec![
+                "config".to_string(),
+                "--global".to_string(),
+                "alias.x".to_string(),
+            ],
+        ));
+        assert!(matches!(
+            blocked_verb.validate(),
+            Err(ToolError::CommandForbidden { .. })
+        ));
+    }
+
+    #[test]
+    fn command_success_uses_exit_code() {
+        assert!(command_exit_code_succeeded(0));
+        assert!(!command_exit_code_succeeded(1));
+
+        let mut session = must(Session::new(config()));
+        session.record_command_result_status("cargo test", 1, "all text looks fine");
+        assert_eq!(session.consecutive_failures, 1);
+
+        session.record_command_result_status("cargo test", 0, "error: stale text");
+        assert_eq!(session.consecutive_failures, 0);
     }
 
     #[test]

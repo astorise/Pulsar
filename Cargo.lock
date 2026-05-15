@@ -1576,8 +1576,10 @@ dependencies = [
  "orchestrator",
  "tempfile",
  "test-log",
+ "wasi-preview1-component-adapter-provider",
  "wasmtime",
  "wasmtime-wasi",
+ "wit-component",
 ]
 
 [[package]]
@@ -2727,6 +2729,12 @@ name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
+
+[[package]]
+name = "wasi-preview1-component-adapter-provider"
+version = "29.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcd9f21bbde82ba59e415a8725e6ad0d0d7e9e460b1a3ccbca5bdee952c1a324"
 
 [[package]]
 name = "wasip2"

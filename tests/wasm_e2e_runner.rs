@@ -1,58 +1,106 @@
-use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use tempfile::TempDir;
-use wasmtime::{Engine, Linker, Store};
-use wasmtime_wasi::WasiCtx;
+use wasi_preview1_component_adapter_provider::{
+    WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
+};
+use wasmtime::component::{Component, Linker};
+use wasmtime::{Config, Engine, Store};
+use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
+use wit_component::ComponentEncoder;
 
-mod tachyon_bindings {
-    wasmtime::component::bindgen!({
-        inline: r#"
-            package tachyon:test;
-
-            world orchestrator-test {
-            }
-        "#
-    });
-}
-
-#[derive(Default)]
 struct MockTachyonHost {
-    inference_calls: Vec<String>,
-    kv: HashMap<String, Vec<u8>>,
-    graph: HashMap<String, Vec<String>>,
-    wasi: Option<WasiCtx>,
+    wasi: WasiCtx,
+    table: ResourceTable,
+    workspace: TempDir,
 }
 
-fn test_store() -> anyhow::Result<(
-    Engine,
-    Linker<MockTachyonHost>,
-    Store<MockTachyonHost>,
-    TempDir,
-)> {
+impl WasiView for MockTachyonHost {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.wasi
+    }
+}
+
+fn workspace_root() -> anyhow::Result<PathBuf> {
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn build_orchestrator_wasm() -> anyhow::Result<PathBuf> {
+    let root = workspace_root()?;
+    let wasm = root.join("target/wasm32-wasip1/debug/orchestrator.wasm");
+    if wasm.exists() {
+        return Ok(wasm);
+    }
+
+    let status = Command::new("cargo")
+        .args(["build", "-p", "orchestrator", "--target", "wasm32-wasip1"])
+        .current_dir(&root)
+        .status()?;
+    anyhow::ensure!(
+        status.success(),
+        "failed to build orchestrator wasm artifact"
+    );
+    anyhow::ensure!(wasm.exists(), "orchestrator wasm artifact was not created");
+    Ok(wasm)
+}
+
+fn component_from_orchestrator_wasm(wasm: &Path, workspace: &TempDir) -> anyhow::Result<PathBuf> {
+    let module = std::fs::read(wasm)?;
+    let component = ComponentEncoder::default()
+        .module(&module)?
+        .adapter(
+            WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME,
+            WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
+        )?
+        .validate(true)
+        .encode()?;
+    let component_path = workspace.path().join("orchestrator.component.wasm");
+    std::fs::write(&component_path, component)?;
+    Ok(component_path)
+}
+
+fn test_store() -> anyhow::Result<(Engine, Linker<MockTachyonHost>, Store<MockTachyonHost>)> {
     let workspace = tempfile::tempdir()?;
-    let engine = Engine::default();
-    let linker = Linker::new(&engine);
+    let mut config = Config::new();
+    config.wasm_component_model(true);
+    let engine = Engine::new(&config)?;
+    let mut linker = Linker::new(&engine);
+    wasmtime_wasi::add_to_linker_sync(&mut linker)?;
     let store = Store::new(
         &engine,
         MockTachyonHost {
-            graph: HashMap::from([(
-                "complex prompt".to_string(),
-                vec!["refactor-parser".to_string()],
-            )]),
-            wasi: Some(wasmtime_wasi::WasiCtxBuilder::new().build()),
-            ..MockTachyonHost::default()
+            wasi: WasiCtxBuilder::new().build(),
+            table: ResourceTable::new(),
+            workspace,
         },
     );
-    Ok((engine, linker, store, workspace))
+    Ok((engine, linker, store))
 }
 
 #[test_log::test]
-fn test_path_traversal_blocked() -> anyhow::Result<()> {
-    let (_engine, _linker, _store, workspace) = test_store()?;
-    let guard = orchestrator::PathGuard::new(workspace.path());
+fn test_component_from_file_loads_orchestrator_artifact() -> anyhow::Result<()> {
+    let (engine, _linker, store) = test_store()?;
+    let wasm = build_orchestrator_wasm()?;
+    let component_path = component_from_orchestrator_wasm(&wasm, &store.data().workspace)?;
+
+    let component = Component::from_file(&engine, &component_path)?;
+
+    assert!(component_path.exists());
+    drop(component);
+    Ok(())
+}
+
+#[test_log::test]
+fn test_path_traversal_blocked_before_host_call() -> anyhow::Result<()> {
+    let (_engine, _linker, store) = test_store()?;
+    let guard = orchestrator::PathGuard::new(store.data().workspace.path());
 
     let blocked = guard.validate("../../etc/passwd");
 
-    assert!(blocked.is_err());
     assert!(matches!(
         blocked,
         Err(orchestrator::ToolError::UnauthorizedAccess { .. })
@@ -61,33 +109,14 @@ fn test_path_traversal_blocked() -> anyhow::Result<()> {
 }
 
 #[test_log::test]
-fn test_successful_skill_escalation() -> anyhow::Result<()> {
-    let (_engine, _linker, mut store, _workspace) = test_store()?;
-    store
-        .data_mut()
-        .inference_calls
-        .push("ResourceExhausted:tier1".to_string());
+fn test_command_exit_code_and_git_sandbox_are_explicit() -> anyhow::Result<()> {
+    assert!(orchestrator::command_exit_code_succeeded(0));
+    assert!(!orchestrator::command_exit_code_succeeded(2));
 
-    assert!(orchestrator::error_needs_escalation(
-        &store.data().inference_calls[0]
-    ));
-    assert_eq!(orchestrator::tiers_for_max(2)[1].model, "qwen-coder-27b");
-    assert_eq!(store.data().graph["complex prompt"][0], "refactor-parser");
-    assert!(store.data().wasi.is_some());
-    Ok(())
-}
+    let blocked = vec!["-c".to_string(), "core.sshCommand=bad".to_string()];
+    assert!(!orchestrator::is_allowed_git_command(&blocked));
 
-#[test_log::test]
-fn test_rabbit_hole_detection() -> anyhow::Result<()> {
-    let (_engine, _linker, mut store, _workspace) = test_store()?;
-    store
-        .data_mut()
-        .kv
-        .insert("last_error".to_string(), b"command failed".to_vec());
-
-    assert!(orchestrator::response_needs_escalation(
-        "<rabbit_hole_detected>"
-    ));
-    assert_eq!(store.data().kv["last_error"], b"command failed".to_vec());
+    let allowed = vec!["status".to_string(), "--short".to_string()];
+    assert!(orchestrator::is_allowed_git_command(&allowed));
     Ok(())
 }

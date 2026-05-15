@@ -53,6 +53,8 @@ tempfile = "3"
 test-log = "0.2"
 wasmtime = "26.0.1"
 wasmtime-wasi = "26.0.1"
+wasi-preview1-component-adapter-provider = "29.0.1"
+wit-component = "0.235.0"
 
 [profile.release]
 opt-level = "s"

@@ -64,10 +64,16 @@ interface kv-partition {
 
 // Host-provided bridge implemented by Tachyon and the connected CLI.
 interface workspace-bridge {
+    record command-result {
+        exit-code: s32,
+        stdout: string,
+        stderr: string,
+    }
+
     webdav-get: func(session-id: string, path: string) -> result<list<u8>, string>;
     webdav-put: func(session-id: string, path: string, contents: list<u8>) -> result<_, string>;
     webdav-propfind: func(session-id: string, path: string) -> result<list<string>, string>;
-    websocket-command: func(session-id: string, command: string) -> result<string, string>;
+    websocket-command: func(session-id: string, executable: string, args: list<string>) -> result<command-result, string>;
     lsp-hover: func(session-id: string, path: string, line: u32, character: u32) -> result<string, string>;
     kv-set: func(key: string, value: list<u8>) -> result<_, string>;
     kv-get: func(key: string) -> result<option<list<u8>>, string>;
