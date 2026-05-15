@@ -614,6 +614,12 @@ impl CommandRequest {
             });
         }
 
+        if contains_shell_operator(&self.executable) || self.executable.contains('\0') {
+            return Err(ToolError::CommandInjection {
+                command: self.display(),
+            });
+        }
+
         if !is_allowed_command(&self.executable, &self.args) {
             return Err(ToolError::CommandForbidden {
                 command: self.executable.clone(),
@@ -1130,10 +1136,19 @@ pub fn parse_legacy_command(command: &str) -> Result<CommandRequest, ToolError> 
         });
     }
 
-    Ok(CommandRequest {
-        executable,
-        args: parts.collect(),
-    })
+    let args = parts.collect::<Vec<_>>();
+    if contains_shell_operator(&executable)
+        || executable.contains('\0')
+        || args
+            .iter()
+            .any(|arg| contains_shell_operator(arg) || arg.contains('\0'))
+    {
+        return Err(ToolError::CommandInjection {
+            command: command.to_string(),
+        });
+    }
+
+    Ok(CommandRequest { executable, args })
 }
 
 pub fn is_allowed_command(command: &str, args: &[String]) -> bool {
@@ -1504,6 +1519,10 @@ mod tests {
         assert!(matches!(
             parse_legacy_command(r#""""#),
             Err(ToolError::InvalidCommand { .. })
+        ));
+        assert!(matches!(
+            parse_legacy_command("\u{1c}\n'&'&"),
+            Err(ToolError::CommandInjection { .. })
         ));
 
         let forbidden = CommandRequest::from_tool(
