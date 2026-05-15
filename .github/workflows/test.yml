@@ -59,11 +59,11 @@ jobs:
 
       - name: fuzz path guard
         working-directory: faas/orchestrator
-        run: cargo fuzz run fuzz_pathguard -- -max_total_time=30
+        run: cargo +nightly fuzz run fuzz_pathguard -- -max_total_time=30
 
       - name: fuzz command lexer
         working-directory: faas/orchestrator
-        run: cargo fuzz run fuzz_command_lexer -- -max_total_time=30
+        run: cargo +nightly fuzz run fuzz_command_lexer -- -max_total_time=30
 
   secrets:
     name: Gitleaks
