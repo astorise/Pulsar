@@ -608,6 +608,12 @@ impl CommandRequest {
     }
 
     pub fn validate(&self) -> Result<(), ToolError> {
+        if self.executable.trim().is_empty() {
+            return Err(ToolError::InvalidCommand {
+                message: "command executable must not be empty".to_string(),
+            });
+        }
+
         if !is_allowed_command(&self.executable, &self.args) {
             return Err(ToolError::CommandForbidden {
                 command: self.executable.clone(),
@@ -1118,6 +1124,12 @@ pub fn parse_legacy_command(command: &str) -> Result<CommandRequest, ToolError> 
     let executable = parts.next().ok_or_else(|| ToolError::InvalidCommand {
         message: "command must not be empty".to_string(),
     })?;
+    if executable.trim().is_empty() {
+        return Err(ToolError::InvalidCommand {
+            message: "command executable must not be empty".to_string(),
+        });
+    }
+
     Ok(CommandRequest {
         executable,
         args: parts.collect(),
@@ -1488,6 +1500,10 @@ mod tests {
         assert!(matches!(
             parse_legacy_command(r#"echo "test"; rm -rf /"#),
             Err(ToolError::CommandInjection { .. })
+        ));
+        assert!(matches!(
+            parse_legacy_command(r#""""#),
+            Err(ToolError::InvalidCommand { .. })
         ));
 
         let forbidden = CommandRequest::from_tool(
