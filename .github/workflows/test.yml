@@ -44,6 +44,27 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  fuzz:
+    name: Short fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: fuzz path guard
+        working-directory: faas/orchestrator
+        run: cargo fuzz run fuzz_pathguard -- -max_total_time=30
+
+      - name: fuzz command lexer
+        working-directory: faas/orchestrator
+        run: cargo fuzz run fuzz_command_lexer -- -max_total_time=30
+
   secrets:
     name: Gitleaks
     runs-on: ubuntu-latest

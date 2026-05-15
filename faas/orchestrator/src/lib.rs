@@ -19,6 +19,7 @@ mod component {
 
     impl Guest for Orchestrator {
         fn start_session(cfg: SessionConfig) -> Result<String, String> {
+            super::init_wasm_tracing();
             let _workspace_token = super::resolve_workspace_token(Some(&cfg.workspace_token))?;
             let config = super::SessionConfig {
                 workspace_url: cfg.workspace_url,
@@ -425,8 +426,26 @@ mod component {
 
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Once;
 
 pub const FAILURE_ESCALATION_THRESHOLD: u32 = 3;
+
+static TELEMETRY_INIT: Once = Once::new();
+
+pub fn init_wasm_tracing() {
+    TELEMETRY_INIT.call_once(|| {
+        let _ = tracing_subscriber::fmt()
+            .json()
+            .with_target(true)
+            .with_current_span(false)
+            .without_time()
+            .try_init();
+        tracing::info!(
+            target = "tachyon.mesh.telemetry",
+            event = "orchestrator_telemetry_initialized"
+        );
+    });
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionConfig {

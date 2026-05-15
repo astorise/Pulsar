@@ -4,11 +4,13 @@ use std::sync::LazyLock;
 
 const MAX_LINES: usize = 120;
 
+// SAFETY: This pattern is a static ANSI escape matcher covered by unit tests.
 static ANSI_RE: LazyLock<Regex> = LazyLock::new(|| match Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]") {
     Ok(regex) => regex,
     Err(err) => panic!("valid ANSI regex: {err}"),
 });
 
+// SAFETY: `filters.json` ships with the crate and invalid static regexes must fail fast at startup.
 static FILTER_RULES: LazyLock<Vec<FilterRule>> = LazyLock::new(|| {
     let raw: Vec<RawFilterRule> = match serde_json::from_str(include_str!("../../filters.json")) {
         Ok(rules) => rules,

@@ -1,0 +1,30 @@
+[package]
+name = "pulsar-workspace-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.orchestrator]
+path = ".."
+
+[[bin]]
+name = "fuzz_pathguard"
+path = "fuzz_targets/fuzz_pathguard.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_command_lexer"
+path = "fuzz_targets/fuzz_command_lexer.rs"
+test = false
+doc = false
+bench = false
