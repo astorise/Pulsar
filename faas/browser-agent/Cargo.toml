@@ -17,6 +17,6 @@ wit-bindgen = { workspace = true }
 package = "tachyon:browser"
 
 [package.metadata.component.dependencies]
-"tachyon:browser" = { package = "astorise:tachyon-mesh-wit", version = "0.9.0-rc.1", registry = "tachyon-mesh-wit" }
-"tachyon:ai" = { package = "astorise:tachyon-mesh-wit", version = "0.9.0-rc.1", registry = "tachyon-mesh-wit" }
-"tachyon:mesh" = { package = "astorise:tachyon-mesh-wit", version = "0.9.0-rc.1", registry = "tachyon-mesh-wit" }
+"tachyon:browser" = { package = "astorise:tachyon-mesh-wit", version = "1.2.0-rc.1", registry = "tachyon-mesh-wit" }
+"tachyon:ai" = { package = "astorise:tachyon-mesh-wit", version = "1.2.0-rc.1", registry = "tachyon-mesh-wit" }
+"tachyon:mesh" = { package = "astorise:tachyon-mesh-wit", version = "1.2.0-rc.1", registry = "tachyon-mesh-wit" }

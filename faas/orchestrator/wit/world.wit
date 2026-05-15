@@ -62,6 +62,16 @@ interface kv-partition {
     }
 }
 
+interface human-bridge {
+    variant approval-status {
+        approved,
+        rejected(string),
+        modified(string),
+    }
+
+    request-approval: func(task-id: string, summary: string, impact-level: u8) -> result<approval-status, string>;
+}
+
 // Host-provided bridge implemented by Tachyon and the connected CLI.
 interface workspace-bridge {
     record command-result {
@@ -110,6 +120,7 @@ world orchestrator-world {
     import viking-context;
     import skill-extractor;
     import kv-partition;
+    import human-bridge;
     import workspace-bridge;
     export orchestrator;
 }

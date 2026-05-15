@@ -120,3 +120,32 @@ fn test_command_exit_code_and_git_sandbox_are_explicit() -> anyhow::Result<()> {
     assert!(orchestrator::is_allowed_git_command(&allowed));
     Ok(())
 }
+
+#[test_log::test]
+fn test_human_bridge_modified_command_replans_execution() -> anyhow::Result<()> {
+    let original = orchestrator::CommandRequest::from_tool(
+        None,
+        Some("git".to_string()),
+        vec!["push".to_string()],
+    )
+    .map_err(|err| anyhow::anyhow!(orchestrator::format_tool_error(err)))?;
+
+    assert!(
+        orchestrator::impact_for_command_request(&original)
+            > orchestrator::HUMAN_APPROVAL_THRESHOLD
+    );
+
+    let modified = orchestrator::apply_modified_command(original, "cargo test --workspace")
+        .map_err(|err| anyhow::anyhow!(orchestrator::format_tool_error(err)))?;
+
+    assert_eq!(modified.executable(), "cargo");
+    assert_eq!(
+        modified.args(),
+        &["test".to_string(), "--workspace".to_string()]
+    );
+    assert!(
+        orchestrator::impact_for_command_request(&modified)
+            <= orchestrator::HUMAN_APPROVAL_THRESHOLD
+    );
+    Ok(())
+}

@@ -10,7 +10,9 @@ mod component {
 
     use exports::tachyon::ai::orchestrator::{Guest, SessionConfig};
     use std::sync::{LazyLock, Mutex};
-    use tachyon::ai::{inference, kv_partition, skill_extractor, viking_context, workspace_bridge};
+    use tachyon::ai::{
+        human_bridge, inference, kv_partition, skill_extractor, viking_context, workspace_bridge,
+    };
 
     static SESSIONS: LazyLock<Mutex<Vec<super::Session>>> =
         LazyLock::new(|| Mutex::new(Vec::new()));
@@ -179,6 +181,12 @@ mod component {
                 }
                 let guard = super::PathGuard::workspace();
                 let guarded_path = guard.validate(&path).map_err(super::format_tool_error)?;
+                let impact = super::impact_for_edit_file(&guarded_path, &contents);
+                let Some(contents) =
+                    request_human_approval_for_edit(session, &guarded_path, contents, impact)?
+                else {
+                    return Ok(());
+                };
                 workspace_bridge::webdav_put(&session.id, &guarded_path, contents.as_bytes())?;
                 session.record_observation("edit_file", &format!("updated {guarded_path}"));
                 let _ = broadcast_to_swarm(session, &format!("updated {guarded_path}"));
@@ -198,6 +206,12 @@ mod component {
                 command_request
                     .validate()
                     .map_err(super::format_tool_error)?;
+                let impact = super::impact_for_command_request(&command_request);
+                let Some(command_request) =
+                    request_human_approval_for_command(session, command_request, impact)?
+                else {
+                    return Ok(());
+                };
                 let command = command_request.display();
                 let command_result = workspace_bridge::websocket_command(
                     &session.id,
@@ -271,6 +285,61 @@ mod component {
         }
 
         Ok(())
+    }
+
+    fn request_human_approval_for_edit(
+        session: &mut super::Session,
+        path: &str,
+        contents: String,
+        impact: u8,
+    ) -> Result<Option<String>, String> {
+        if impact <= super::HUMAN_APPROVAL_THRESHOLD {
+            return Ok(Some(contents));
+        }
+
+        let summary = super::human_approval_summary("edit_file", path, impact);
+        match human_bridge::request_approval(&session.id, &summary, impact)? {
+            human_bridge::ApprovalStatus::Approved => Ok(Some(contents)),
+            human_bridge::ApprovalStatus::Rejected(reason) => {
+                session.status = super::AgentStatus::AwaitingUser;
+                session.record_observation("operation_rejected_by_human", &reason);
+                Ok(None)
+            }
+            human_bridge::ApprovalStatus::Modified(modified) => {
+                session.record_observation(
+                    "operation_modified_by_human",
+                    &format!("edit_file {path}"),
+                );
+                Ok(Some(modified))
+            }
+        }
+    }
+
+    fn request_human_approval_for_command(
+        session: &mut super::Session,
+        command_request: super::CommandRequest,
+        impact: u8,
+    ) -> Result<Option<super::CommandRequest>, String> {
+        if impact <= super::HUMAN_APPROVAL_THRESHOLD {
+            return Ok(Some(command_request));
+        }
+
+        let summary =
+            super::human_approval_summary("run_command", &command_request.display(), impact);
+        match human_bridge::request_approval(&session.id, &summary, impact)? {
+            human_bridge::ApprovalStatus::Approved => Ok(Some(command_request)),
+            human_bridge::ApprovalStatus::Rejected(reason) => {
+                session.status = super::AgentStatus::AwaitingUser;
+                session.record_observation("operation_rejected_by_human", &reason);
+                Ok(None)
+            }
+            human_bridge::ApprovalStatus::Modified(modified) => {
+                let replacement = super::apply_modified_command(command_request, &modified)
+                    .map_err(super::format_tool_error)?;
+                session.record_observation("operation_modified_by_human", &replacement.display());
+                Ok(Some(replacement))
+            }
+        }
     }
 
     fn crawl_workspace(session_id: &str) -> Result<(), String> {
@@ -429,6 +498,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Once;
 
 pub const FAILURE_ESCALATION_THRESHOLD: u32 = 3;
+pub const HUMAN_APPROVAL_THRESHOLD: u8 = 5;
 
 static TELEMETRY_INIT: Once = Once::new();
 
@@ -1151,6 +1221,96 @@ pub fn parse_legacy_command(command: &str) -> Result<CommandRequest, ToolError> 
     Ok(CommandRequest { executable, args })
 }
 
+pub fn impact_for_tool_call(tool_call: &ToolCall) -> u8 {
+    match tool_call {
+        ToolCall::EditFile { path, contents } => impact_for_edit_file(path, contents),
+        ToolCall::RunCommand {
+            command,
+            executable,
+            args,
+        } => CommandRequest::from_tool(command.clone(), executable.clone(), args.clone())
+            .map(|request| impact_for_command_request(&request))
+            .unwrap_or(10),
+        ToolCall::ReadVikingContext { .. }
+        | ToolCall::SearchVikingContext { .. }
+        | ToolCall::QueryGraph { .. }
+        | ToolCall::AskLsp { .. } => 0,
+        ToolCall::SubmitPlan { .. } | ToolCall::RequestHumanAction { .. } => 1,
+        ToolCall::Finish { .. } => 0,
+    }
+}
+
+pub fn impact_for_edit_file(path: &str, contents: &str) -> u8 {
+    let path = path.replace('\\', "/").to_ascii_lowercase();
+    let mut impact = 6;
+
+    if path.starts_with(".github/")
+        || path == "cargo.toml"
+        || path == "cargo.lock"
+        || path == "rust-toolchain.toml"
+        || path.ends_with("/cargo.toml")
+    {
+        impact = impact.max(8);
+    }
+
+    if path.ends_with(".ps1")
+        || path.ends_with(".sh")
+        || contents.contains("Remove-Item")
+        || contents.contains("rm -rf")
+    {
+        impact = impact.max(9);
+    }
+
+    impact
+}
+
+pub fn impact_for_command_request(command: &CommandRequest) -> u8 {
+    let executable = command.executable();
+    let args = command.args();
+    let first_arg = args.first().map(String::as_str).unwrap_or_default();
+
+    match executable {
+        "git" => match first_arg {
+            "status" | "diff" | "log" | "show" | "branch" => 1,
+            "add" => 6,
+            "commit" | "push" | "pull" | "fetch" | "rebase" | "merge" | "tag" | "checkout"
+            | "switch" => 8,
+            _ => 7,
+        },
+        "cargo" => match first_arg {
+            "test" | "check" | "clippy" | "fmt" | "build" => 3,
+            "publish" | "install" => 8,
+            _ => 5,
+        },
+        "npm" => match first_arg {
+            "test" | "run" | "build" => 4,
+            "install" | "ci" => 6,
+            "publish" => 10,
+            _ => 5,
+        },
+        "node" | "rustc" => 3,
+        "ls" | "cat" | "rg" | "echo" => 1,
+        _ => 10,
+    }
+}
+
+pub fn human_approval_summary(operation: &str, target: &str, impact: u8) -> String {
+    format!("Human approval required for {operation} on `{target}` (impact {impact}/10)")
+}
+
+pub fn apply_modified_command(
+    original: CommandRequest,
+    modified: &str,
+) -> Result<CommandRequest, ToolError> {
+    if modified.trim().is_empty() {
+        return Ok(original);
+    }
+
+    let replacement = parse_legacy_command(modified)?;
+    replacement.validate()?;
+    Ok(replacement)
+}
+
 pub fn is_allowed_command(command: &str, args: &[String]) -> bool {
     if command == "git" {
         return is_allowed_git_command(args);
@@ -1582,6 +1742,51 @@ mod tests {
             blocked_verb.validate(),
             Err(ToolError::CommandForbidden { .. })
         ));
+    }
+
+    #[test]
+    fn impact_scorer_flags_state_mutating_operations() {
+        let read = ToolCall::ReadVikingContext {
+            uri: "viking://src/lib.rs".to_string(),
+        };
+        assert_eq!(impact_for_tool_call(&read), 0);
+
+        let edit = ToolCall::EditFile {
+            path: "src/lib.rs".to_string(),
+            contents: "fn main() {}".to_string(),
+        };
+        assert!(impact_for_tool_call(&edit) > HUMAN_APPROVAL_THRESHOLD);
+
+        let status = must(CommandRequest::from_tool(
+            None,
+            Some("git".to_string()),
+            vec!["status".to_string(), "--short".to_string()],
+        ));
+        assert!(impact_for_command_request(&status) <= HUMAN_APPROVAL_THRESHOLD);
+
+        let push = must(CommandRequest::from_tool(
+            None,
+            Some("git".to_string()),
+            vec!["push".to_string()],
+        ));
+        assert!(impact_for_command_request(&push) > HUMAN_APPROVAL_THRESHOLD);
+    }
+
+    #[test]
+    fn modified_human_command_is_reparsed_and_revalidated() {
+        let original = must(CommandRequest::from_tool(
+            None,
+            Some("git".to_string()),
+            vec!["push".to_string()],
+        ));
+        let modified = must(apply_modified_command(original, "cargo test --workspace"));
+
+        assert_eq!(modified.executable(), "cargo");
+        assert_eq!(
+            modified.args(),
+            &["test".to_string(), "--workspace".to_string()]
+        );
+        assert!(modified.validate().is_ok());
     }
 
     #[test]
