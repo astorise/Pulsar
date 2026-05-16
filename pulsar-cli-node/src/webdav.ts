@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 
 export interface WebdavHandle {
   url: string;
+  localPort: number;
   close: () => Promise<void>;
 }
 
@@ -351,10 +352,10 @@ export async function spawn(opts: WebdavOptions): Promise<WebdavHandle> {
 
   return {
     url,
+    localPort: address.port,
     close: () =>
       new Promise<void>((resolveClose, rejectClose) => {
         server.close((err) => (err ? rejectClose(err) : resolveClose()));
       }),
   };
 }
-

@@ -34,3 +34,9 @@ or spawned directly by the `pulsar-vscode` extension.
 | ------------------------ | ---------------------------------------- |
 | `PULSAR_ORCHESTRATOR_WS` | `ws://127.0.0.1:8081/orchestrator`       |
 | `PULSAR_WEBDAV_ADDR`     | `127.0.0.1:0` (port `0` picks a free one)|
+| `WORMHOLE_RELAY`         | unset; when set, exposes WebDAV through Wormhole |
+| `WORMHOLE_PUBLIC_PORT`   | local WebDAV port                        |
+| `WORMHOLE_CA_CERT`       | unset                                    |
+| `WORMHOLE_CLIENT_CERT`   | unset                                    |
+| `WORMHOLE_CLIENT_KEY`    | unset                                    |
+| `PULSAR_DEV_UNSECURE`    | unset; `1` skips Wormhole CA/auth options |

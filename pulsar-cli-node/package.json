@@ -17,12 +17,13 @@
     "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --banner:js=\"#!/usr/bin/env node\"",
     "build:dev": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --sourcemap",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/__tests__/protocol.test.ts src/__tests__/git.test.ts src/__tests__/ws-client.test.ts src/__tests__/skillify.test.ts src/__tests__/webdav.test.ts"
+    "test": "node --test --import tsx src/__tests__/protocol.test.ts src/__tests__/git.test.ts src/__tests__/ws-client.test.ts src/__tests__/skillify.test.ts src/__tests__/webdav.test.ts src/__tests__/wormhole.test.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@tachyon-mesh/wormhole": "^1.0.0",
     "msgpackr": "^1.11.0",
     "simple-git": "^3.27.0",
     "ws": "^8.18.0"

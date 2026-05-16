@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { basename } from "node:path";
 import {
   applyPatchToRepo,
   cleanupSandbox,
@@ -11,16 +12,56 @@ import {
 import { promptYesNo, startRepl } from "./repl.js";
 import * as skillify from "./skillify.js";
 import { generateToken, spawn as spawnWebdav, WebdavHandle } from "./webdav.js";
+import { buildPublicWebdavUrl, createWormhole, WormholeFactory, WormholeTunnel } from "./wormhole.js";
 import { connect } from "./ws-client.js";
 
-interface CliConfig {
+export interface CliConfig {
   orchestratorUrl: string;
   webdavHost: string;
   webdavPort: number;
   workspaceRoot: string;
+  wormhole: WormholeConfig | null;
 }
 
-function loadConfig(): CliConfig {
+export interface WormholeConfig {
+  relay: string;
+  publicPort: number;
+  ca?: string;
+  clientCert?: string;
+  clientKey?: string;
+  unsecure: boolean;
+}
+
+function parseOptionalPort(value: string | undefined, name: string): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const port = Number.parseInt(value, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${name} must be a TCP port between 1 and 65535`);
+  }
+  return port;
+}
+
+export function parseWormholeConfig(env: NodeJS.ProcessEnv): WormholeConfig | null {
+  const relay = env.WORMHOLE_RELAY;
+  if (!relay) return null;
+
+  const clientCert = env.WORMHOLE_CLIENT_CERT;
+  const clientKey = env.WORMHOLE_CLIENT_KEY;
+  if ((clientCert && !clientKey) || (!clientCert && clientKey)) {
+    throw new Error("WORMHOLE_CLIENT_CERT and WORMHOLE_CLIENT_KEY must be set together");
+  }
+
+  return {
+    relay,
+    publicPort: parseOptionalPort(env.WORMHOLE_PUBLIC_PORT, "WORMHOLE_PUBLIC_PORT") ?? 0,
+    ca: env.WORMHOLE_CA_CERT,
+    clientCert,
+    clientKey,
+    unsecure: env.PULSAR_DEV_UNSECURE === "1" || env.WORMHOLE_DEV === "1",
+  };
+}
+
+export function loadConfig(): CliConfig {
   const orchestratorUrl = process.env.PULSAR_ORCHESTRATOR_WS ?? "ws://127.0.0.1:8081/orchestrator";
   const rawAddr = process.env.PULSAR_WEBDAV_ADDR ?? "127.0.0.1:0";
   const [host, portStr] = rawAddr.split(":");
@@ -33,6 +74,7 @@ function loadConfig(): CliConfig {
     webdavHost: host || "127.0.0.1",
     webdavPort: port,
     workspaceRoot: resolve(process.cwd()),
+    wormhole: parseWormholeConfig(process.env),
   };
 }
 
@@ -79,12 +121,37 @@ async function handleSandboxFinish(sandbox: Sandbox): Promise<void> {
   await cleanupSandbox(sandbox);
 }
 
-async function runInteractive(config: CliConfig): Promise<number> {
+export async function openWormhole(
+  config: WormholeConfig,
+  localPort: number,
+  factory: WormholeFactory = createWormhole,
+): Promise<{ tunnel: WormholeTunnel; workspaceUrl: string }> {
+  const publicPort = config.publicPort === 0 ? localPort : config.publicPort;
+  const tunnel = await factory({
+    relay: config.relay,
+    targets: [{ protocol: "tcp", publicPort, localPort }],
+    ca: config.unsecure ? undefined : config.ca,
+    auth: config.unsecure || !config.clientCert || !config.clientKey
+      ? undefined
+      : { cert: config.clientCert, key: config.clientKey },
+    unsecure: config.unsecure,
+  });
+  return {
+    tunnel,
+    workspaceUrl: buildPublicWebdavUrl(config.relay, publicPort),
+  };
+}
+
+export async function runInteractive(
+  config: CliConfig,
+  wormholeFactory: WormholeFactory = createWormhole,
+): Promise<number> {
   const token = generateToken();
   const sandbox = await createSandbox(config.workspaceRoot, token);
   const webdavRoot = sandbox?.worktreePath ?? config.workspaceRoot;
 
   let webdav: WebdavHandle | null = null;
+  let tunnel: WormholeTunnel | null = null;
   try {
     webdav = await spawnWebdav({
       root: webdavRoot,
@@ -92,11 +159,17 @@ async function runInteractive(config: CliConfig): Promise<number> {
       port: config.webdavPort,
       token,
     });
+    let workspaceUrl = webdav.url;
+    if (config.wormhole) {
+      const opened = await openWormhole(config.wormhole, webdav.localPort, wormholeFactory);
+      tunnel = opened.tunnel;
+      workspaceUrl = opened.workspaceUrl;
+    }
 
     let finishTriggered = false;
     const ws = connect({
       endpoint: config.orchestratorUrl,
-      init: { type: "init", workspace_url: webdav.url, workspace_token: token },
+      init: { type: "init", workspace_url: workspaceUrl, workspace_token: token },
       onFinish: () => {
         finishTriggered = true;
       },
@@ -114,6 +187,7 @@ async function runInteractive(config: CliConfig): Promise<number> {
     }
     return 0;
   } finally {
+    if (tunnel) await tunnel.close();
     if (webdav) await webdav.close();
   }
 }
@@ -126,7 +200,8 @@ export async function main(argv: string[]): Promise<number> {
   return runInteractive(config);
 }
 
-if (process.argv[1] && /pulsar-cli|main\.(c?js|ts)$/.test(process.argv[1])) {
+const entrypoint = process.argv[1] ? basename(process.argv[1]) : "";
+if (entrypoint === "pulsar-cli" || /^main\.(c?js|ts)$/.test(entrypoint)) {
   main(process.argv)
     .then((code) => process.exit(code))
     .catch((err) => {
